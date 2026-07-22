@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Herdr F1</title>
+</head>
+<body>
+  <div id="app">
+    <section id="track-column">
+      <header class="chrome">
+        <span id="live-pill"><span class="dot"></span><span id="phase-text">RACE LIVE</span></span>
+        <span id="lap-text" class="mono">LAP 1 / 58</span>
+        <span id="gp-text" class="muted">GRAND PRIX 1</span>
+        <span id="connection-text" class="mono push-right"></span>
+      </header>
+      <div id="track-wrap">
+        <canvas id="track" aria-hidden="true"></canvas>
+        <div id="overlay" hidden></div>
+      </div>
+    </section>
+    <section id="standings-column">
+      <header class="chrome">
+        <span class="panel-title">CONSTRUCTORS</span>
+        <span id="car-count" class="mono muted push-right">—</span>
+      </header>
+      <div id="standings-scroll">
+        <div id="standings" role="list" aria-label="Constructors standings"></div>
+        <div id="standings-empty">FORMATION LAP · AWAITING GRID</div>
+      </div>
+    </section>
+  </div>
+  <script type="module" src="/main.ts"></script>
+</body>
+</html>

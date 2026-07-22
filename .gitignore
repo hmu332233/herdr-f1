@@ -1,0 +1,11 @@
+node_modules/
+dist/
+
+# Local environment and OS files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Test output
+coverage/
