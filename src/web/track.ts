@@ -224,7 +224,7 @@ export function createTrackRenderer(
 
   function placementTarget(
     entry: EntryPresentation, progress: number, separation: number, pitSlot: number,
-  ): { x: number; y: number; angle: number; kind: 'circuit' | 'pit' } {
+  ): { x: number; y: number; kind: 'circuit' | 'pit' } {
     const placement = entry.placement;
     if (placement.kind === 'track' || placement.kind === 'cooldown' || placement.kind === 'incidentTrack') {
       const point = pointAt(progress, line, lengths);
@@ -234,18 +234,17 @@ export function createTrackRenderer(
       return {
         x: point.x + Math.cos(point.angle + Math.PI / 2) * lane,
         y: point.y + Math.sin(point.angle + Math.PI / 2) * lane,
-        angle: point.angle,
         kind: 'circuit',
       };
     }
     return pitTarget(entry.teamID, pitSlot);
   }
 
-  function pitTarget(teamID: string, pitSlot: number): { x: number; y: number; angle: number; kind: 'pit' } {
+  function pitTarget(teamID: string, pitSlot: number): { x: number; y: number; kind: 'pit' } {
     const box = pitBoxes.get(teamID) ??
       { x: pitLaneRect.x + pitLaneRect.width / 2, y: pitLaneRect.y + pitLaneRect.height / 2 };
     // Cascade downward in css space (the Swift original cascades -y in y-up).
-    return { x: box.x + pitSlot * 12, y: box.y + pitSlot * 10, angle: 0, kind: 'pit' };
+    return { x: box.x + pitSlot * 12, y: box.y + pitSlot * 10, kind: 'pit' };
   }
 
   function updateMarker(
@@ -362,7 +361,7 @@ export function createTrackRenderer(
 
     // Status ring + treatments; the team fill never changes with status.
     ctx.globalAlpha = 1;
-    if (entry.isQueuedNextGrid) {
+    if (entry.placement.kind === 'nextGrid') {
       ring(ctx, RADIUS + 3.5, palette.textMuted, 1);
     } else {
       switch (entry.status) {
@@ -407,7 +406,7 @@ export function createTrackRenderer(
     }
 
     ctx.fillStyle = contrastText(color);
-    ctx.font = `800 ${entry.carNumber > 99 ? 8 : 10}px ${FONT}`;
+    ctx.font = `800 10px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(entry.carNumber), 0, 0.5);
@@ -415,7 +414,7 @@ export function createTrackRenderer(
     // Tags below/above the disc.
     ctx.font = `800 7px ${FONT}`;
     ctx.textBaseline = 'top';
-    if (entry.isQueuedNextGrid) {
+    if (entry.placement.kind === 'nextGrid') {
       ctx.fillStyle = palette.textMuted;
       ctx.fillText('NEXT GRID', 0, RADIUS + 6);
     } else if (entry.status === 'idle') {
@@ -429,7 +428,7 @@ export function createTrackRenderer(
     }
 
     // Incident: warning triangle up-right + restrained smoke.
-    if (!entry.isQueuedNextGrid && entry.status === 'blocked') {
+    if (entry.placement.kind !== 'nextGrid' && entry.status === 'blocked') {
       ctx.save();
       ctx.translate(RADIUS + 2, -RADIUS - 2);
       ctx.beginPath();

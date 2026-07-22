@@ -62,7 +62,6 @@ describe('grid lifecycle', () => {
     const now = tickTo(session, 0, 9);
     session.applySnapshot(snap(team('ws-1', 'alpha', [agent('t1', 'working')])), now);
     const retired = entryById(session.presentation(), 't2');
-    expect(retired.isRetired).toBe(true);
     expect(retired.statusText).toBe('RETIRED · LAP 1');
     expect(retired.placement.kind).toBe('retired');
     expect(retired.displaySpeed).toBe(0);
@@ -77,7 +76,7 @@ describe('grid lifecycle', () => {
     now = tickTo(session, now, now + 9);
     session.applySnapshot(twoCars(), now);
     const restored = entryById(session.presentation(), 't2');
-    expect(restored.isRetired).toBe(false);
+    expect(restored.placement.kind).toBe('track');
     expect(restored.carNumber).toBe(numberBefore);
     expect(restored.officialDistance).toBeCloseTo(1.0, 6); // frozen while retired
   });

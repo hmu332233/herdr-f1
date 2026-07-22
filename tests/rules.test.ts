@@ -3,18 +3,12 @@ import { RaceRules, seededPace, stableHash } from '../src/server/rules.js';
 
 describe('RaceRules', () => {
   it('matches the Swift constants', () => {
-    expect(RaceRules.totalLaps).toBe(58);
-    expect(RaceRules.baseLapDuration).toBe(18);
-    expect(RaceRules.baseSpeed).toBeCloseTo(1 / 18, 12);
-    expect(RaceRules.paceMin).toBe(0.75);
-    expect(RaceRules.paceMax).toBe(1.25);
-    expect(RaceRules.doneCooldownFactor).toBe(0.25);
-    expect(RaceRules.maximumAcceptedStep).toBe(1.0);
-    expect(RaceRules.podiumDuration).toBe(8.0);
-    expect(RaceRules.newEntrantDeficit).toBe(0.15);
-    expect(RaceRules.newStintDuration).toBe(4.0);
-    expect(RaceRules.paletteSize).toBe(12);
-    expect(RaceRules.maximumGridNumber).toBe(99);
+    expect(RaceRules).toMatchObject({
+      totalLaps: 58, baseLapDuration: 18, baseSpeed: 1 / 18,
+      paceMin: 0.75, paceMax: 1.25, doneCooldownFactor: 0.25,
+      maximumAcceptedStep: 1, podiumDuration: 8, newEntrantDeficit: 0.15,
+      newStintDuration: 4, paletteSize: 12, maximumGridNumber: 99,
+    });
   });
 });
 

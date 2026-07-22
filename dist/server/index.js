@@ -5239,7 +5239,7 @@ function createRaceBroadcaster(session, clock, tickMs = 250) {
             send(json);
     }
     function buildSync() {
-        return { type: 'sync', serverTime: clock(), ...session.presentation() };
+        return { type: 'sync', ...session.presentation() };
     }
     return { start, stop, addClient, removeClient, tick, buildSync };
 }
@@ -5311,10 +5311,10 @@ function loadFixture(name, session) {
         default: grid(session);
     }
 }
-function agent(id, workspace, tab, kind, status, focused = false) {
+function agent(id, tab, kind, status, focused = false) {
     return {
-        terminalID: id, paneID: `pane-${id}`, workspaceID: workspace,
-        tabLabel: tab, agentKind: kind, agentSessionReference: null, isFocused: focused, status,
+        terminalID: id, paneID: `pane-${id}`, tabLabel: tab,
+        agentKind: kind, agentSessionReference: null, isFocused: focused, status,
     };
 }
 function snapshot(teams) {
@@ -5350,24 +5350,24 @@ function race(session, teams, seconds) {
 function standardTeams() {
     return [
         ['ws-herdr', 'herdr', [
-                agent('t1', 'ws-herdr', 'core', 'claude', 'working'),
-                agent('t2', 'ws-herdr', 'socket', 'codex', 'working', true),
-                agent('t3', 'ws-herdr', 'tests', 'claude', 'idle'),
+                agent('t1', 'core', 'claude', 'working'),
+                agent('t2', 'socket', 'codex', 'working', true),
+                agent('t3', 'tests', 'claude', 'idle'),
             ]],
         ['ws-pet', 'agent-pet', [
-                agent('t4', 'ws-pet', 'dashboard', 'claude', 'working'),
-                agent('t5', 'ws-pet', 'track', 'claude', 'done'),
-                agent('t6', 'ws-pet', 'standings', 'codex', 'blocked'),
-                agent('t7', 'ws-pet', 'fixtures', 'claude', 'idle'),
+                agent('t4', 'dashboard', 'claude', 'working'),
+                agent('t5', 'track', 'claude', 'done'),
+                agent('t6', 'standings', 'codex', 'blocked'),
+                agent('t7', 'fixtures', 'claude', 'idle'),
             ]],
         ['ws-console', 'console-api', [
-                agent('t8', 'ws-console', 'billing', 'codex', 'working'),
-                agent('t9', 'ws-console', 'auth', 'claude', 'idle'),
+                agent('t8', 'billing', 'codex', 'working'),
+                agent('t9', 'auth', 'claude', 'idle'),
             ]],
         ['ws-infra', 'infra-tools', [
-                agent('t10', 'ws-infra', 'deploy', 'claude', 'working'),
-                agent('t11', 'ws-infra', 'monitor', 'aider', 'done'),
-                agent('t12', 'ws-infra', 'runbook', 'codex', 'working'),
+                agent('t10', 'deploy', 'claude', 'working'),
+                agent('t11', 'monitor', 'aider', 'done'),
+                agent('t12', 'runbook', 'codex', 'working'),
             ]],
     ];
 }
@@ -5379,7 +5379,7 @@ function dense(session) {
     const teams = Array.from({ length: 14 }, (_, index) => {
         const id = `ws-${index}`;
         const label = `project-${index}`;
-        const agents = Array.from({ length: (index % 3) + 1 }, (_, slot) => agent(`d${index}-${slot}`, id, `pane-${slot}`, slot % 2 === 0 ? 'claude' : 'codex', statuses[(index + slot) % statuses.length]));
+        const agents = Array.from({ length: (index % 3) + 1 }, (_, slot) => agent(`d${index}-${slot}`, `pane-${slot}`, slot % 2 === 0 ? 'claude' : 'codex', statuses[(index + slot) % statuses.length]));
         return [id, label, agents];
     });
     race(session, teams, 300);
@@ -5448,7 +5448,6 @@ function projectSnapshot(snapshot) {
         const entry = {
             terminalID: String(agent.terminal_id ?? ''),
             paneID,
-            workspaceID,
             tabLabel: tabLabel(agent, tabs),
             agentKind: firstVisible(agent.display_agent, agent.agent, agent.name) ?? 'Agent',
             agentSessionReference: sessionReference(agent),
@@ -5912,7 +5911,6 @@ function createRaceSession(paceSource = seededPace) {
             grandPrix: grandPrix,
             top: standings.slice(0, 3).map(standing => ({
                 rank: standing.rank,
-                teamID: standing.id,
                 label: standing.label,
                 colorToken: standing.colorToken,
                 distance: standing.distance,
@@ -6216,8 +6214,6 @@ function createRaceSession(paceSource = seededPace) {
             placement,
             displaySpeed: displaySpeed(entry),
             isFocused: entry.isFocused,
-            isRetired: entry.isRetired,
-            isQueuedNextGrid: entry.isQueuedNextGrid,
             showsNewStint: entry.newStintUntil !== null && raceTime < entry.newStintUntil,
         };
     }
@@ -6353,7 +6349,6 @@ async function startServer(options) {
         socket.on('close', () => options.broadcaster.removeClient(send));
     });
     return {
-        server,
         port,
         close: () => new Promise(resolve => {
             sockets.close();
@@ -6483,7 +6478,6 @@ function instancePaths(target) {
     const root = stateRoot();
     const key = instanceKey(target);
     return {
-        stateRoot: root,
         recordPath: external_node_path_default().join(root, 'instances', `${key}.json`),
         lockPath: external_node_path_default().join(root, 'locks', `${key}.lock`),
         logPath: external_node_path_default().join(root, 'logs', `${key}.log`),

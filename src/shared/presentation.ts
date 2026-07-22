@@ -55,8 +55,6 @@ export interface EntryPresentation {
   /** Display motion in laps/second for client-side extrapolation between syncs. */
   displaySpeed: number;
   isFocused: boolean;
-  isRetired: boolean;
-  isQueuedNextGrid: boolean;
   showsNewStint: boolean;
 }
 
@@ -76,7 +74,6 @@ export interface TeamStanding {
 
 export interface PodiumTeam {
   rank: number;
-  teamID: string;
   label: string;
   colorToken: TeamColorToken;
   distance: number;

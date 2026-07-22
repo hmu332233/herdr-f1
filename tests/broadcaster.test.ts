@@ -30,7 +30,6 @@ describe('RaceBroadcaster', () => {
     rig.setNow(0.25);
     rig.broadcaster.tick();
     expect(rig.sent.length).toBe(2);
-    expect(rig.sent.at(-1)!.serverTime).toBe(0.25);
   });
 
   it('keeps serving remaining clients after one is removed', () => {

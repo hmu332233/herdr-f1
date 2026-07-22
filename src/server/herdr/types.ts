@@ -5,7 +5,6 @@ import type { AgentStatus, ConnectionState } from '../../shared/presentation.js'
 export interface SourceAgent {
   terminalID: string;
   paneID: string;
-  workspaceID: string;
   tabLabel: string;
   agentKind: string;
   /** Opaque session identity used only for NEW STINT detection.

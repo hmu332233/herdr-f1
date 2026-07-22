@@ -10,7 +10,6 @@ export function agent(
   return {
     terminalID,
     paneID: `pane-${terminalID}`,
-    workspaceID: 'ws-1',
     tabLabel: `tab-${terminalID}`,
     agentKind: 'claude',
     agentSessionReference: null,
@@ -21,7 +20,7 @@ export function agent(
 }
 
 export function team(id: string, label: string, agents: SourceAgent[]): SourceTeam {
-  return { id, label, agents: agents.map(a => ({ ...a, workspaceID: id })) };
+  return { id, label, agents };
 }
 
 export function snap(...teams: SourceTeam[]): SourceSnapshot {

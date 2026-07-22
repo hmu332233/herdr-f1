@@ -19,7 +19,6 @@ const MIME: Record<string, string> = {
 };
 
 export interface DashboardServer {
-  server: http.Server;
   port: number;
   close(): Promise<void>;
 }
@@ -56,7 +55,6 @@ export async function startServer(options: ServerOptions): Promise<DashboardServ
   });
 
   return {
-    server,
     port,
     close: () =>
       new Promise(resolve => {

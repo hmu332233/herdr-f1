@@ -210,7 +210,6 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
       grandPrix: grandPrix,
       top: standings.slice(0, 3).map(standing => ({
         rank: standing.rank,
-        teamID: standing.id,
         label: standing.label,
         colorToken: standing.colorToken,
         distance: standing.distance,
@@ -539,8 +538,6 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
       placement,
       displaySpeed: displaySpeed(entry),
       isFocused: entry.isFocused,
-      isRetired: entry.isRetired,
-      isQueuedNextGrid: entry.isQueuedNextGrid,
       showsNewStint: entry.newStintUntil !== null && raceTime < entry.newStintUntil,
     };
   }

@@ -22,12 +22,12 @@ export function loadFixture(name: string, session: RaceSession): void {
 type TeamSpec = [id: string, label: string, agents: SourceAgent[]];
 
 function agent(
-  id: string, workspace: string, tab: string,
-  kind: string, status: AgentStatus, focused = false,
+  id: string, tab: string, kind: string,
+  status: AgentStatus, focused = false,
 ): SourceAgent {
   return {
-    terminalID: id, paneID: `pane-${id}`, workspaceID: workspace,
-    tabLabel: tab, agentKind: kind, agentSessionReference: null, isFocused: focused, status,
+    terminalID: id, paneID: `pane-${id}`, tabLabel: tab,
+    agentKind: kind, agentSessionReference: null, isFocused: focused, status,
   };
 }
 
@@ -70,24 +70,24 @@ function race(session: RaceSession, teams: TeamSpec[], seconds: number): void {
 function standardTeams(): TeamSpec[] {
   return [
     ['ws-herdr', 'herdr', [
-      agent('t1', 'ws-herdr', 'core', 'claude', 'working'),
-      agent('t2', 'ws-herdr', 'socket', 'codex', 'working', true),
-      agent('t3', 'ws-herdr', 'tests', 'claude', 'idle'),
+      agent('t1', 'core', 'claude', 'working'),
+      agent('t2', 'socket', 'codex', 'working', true),
+      agent('t3', 'tests', 'claude', 'idle'),
     ]],
     ['ws-pet', 'agent-pet', [
-      agent('t4', 'ws-pet', 'dashboard', 'claude', 'working'),
-      agent('t5', 'ws-pet', 'track', 'claude', 'done'),
-      agent('t6', 'ws-pet', 'standings', 'codex', 'blocked'),
-      agent('t7', 'ws-pet', 'fixtures', 'claude', 'idle'),
+      agent('t4', 'dashboard', 'claude', 'working'),
+      agent('t5', 'track', 'claude', 'done'),
+      agent('t6', 'standings', 'codex', 'blocked'),
+      agent('t7', 'fixtures', 'claude', 'idle'),
     ]],
     ['ws-console', 'console-api', [
-      agent('t8', 'ws-console', 'billing', 'codex', 'working'),
-      agent('t9', 'ws-console', 'auth', 'claude', 'idle'),
+      agent('t8', 'billing', 'codex', 'working'),
+      agent('t9', 'auth', 'claude', 'idle'),
     ]],
     ['ws-infra', 'infra-tools', [
-      agent('t10', 'ws-infra', 'deploy', 'claude', 'working'),
-      agent('t11', 'ws-infra', 'monitor', 'aider', 'done'),
-      agent('t12', 'ws-infra', 'runbook', 'codex', 'working'),
+      agent('t10', 'deploy', 'claude', 'working'),
+      agent('t11', 'monitor', 'aider', 'done'),
+      agent('t12', 'runbook', 'codex', 'working'),
     ]],
   ];
 }
@@ -102,7 +102,7 @@ function dense(session: RaceSession): void {
     const id = `ws-${index}`;
     const label = `project-${index}`;
     const agents = Array.from({ length: (index % 3) + 1 }, (_, slot) =>
-      agent(`d${index}-${slot}`, id, `pane-${slot}`,
+      agent(`d${index}-${slot}`, `pane-${slot}`,
         slot % 2 === 0 ? 'claude' : 'codex', statuses[(index + slot) % statuses.length]));
     return [id, label, agents];
   });

@@ -57,7 +57,6 @@ export function projectSnapshot(snapshot: unknown): SourceSnapshot {
     const entry: SourceAgent = {
       terminalID: String(agent.terminal_id ?? ''),
       paneID,
-      workspaceID,
       tabLabel: tabLabel(agent, tabs),
       agentKind:
         firstVisible(agent.display_agent, agent.agent, agent.name) ?? 'Agent',

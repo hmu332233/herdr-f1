@@ -2,15 +2,8 @@ import type { EntryPresentation, TeamColorToken } from '../shared/presentation.j
 
 export const palette = {
   canvas: '#0A0C10',
-  panel: '#0D1015',
-  chrome: '#10131A',
   card: '#12161D',
-  cardHeader: 'rgba(255,255,255,0.04)',
   asphalt: '#171B22',
-  border: 'rgba(255,255,255,0.08)',
-  borderSK: '#474747',
-  hairline: 'rgba(255,255,255,0.05)',
-  rowHover: 'rgba(255,255,255,0.04)',
   textSoft: 'rgba(255,255,255,0.75)',
   textMuted: 'rgba(255,255,255,0.45)',
   liveRed: '#E10600',
@@ -31,7 +24,9 @@ export function teamColor(token: TeamColorToken): string {
 }
 
 export function rowStatusColor(entry: EntryPresentation): string {
-  if (entry.isQueuedNextGrid || entry.isRetired) return palette.statusIdle;
+  if (entry.placement.kind === 'nextGrid' || entry.placement.kind === 'retired') {
+    return palette.statusIdle;
+  }
   switch (entry.status) {
     case 'working': return palette.statusWorking;
     case 'idle': return palette.statusPit;

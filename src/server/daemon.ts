@@ -17,7 +17,7 @@ export interface InstanceRecord {
 
 export interface StartRequest { target: InstanceTarget; port: number; }
 export interface StartResult { record: InstanceRecord; reused: boolean; }
-export interface InstancePaths { stateRoot: string; recordPath: string; lockPath: string; logPath: string; }
+export interface InstancePaths { recordPath: string; lockPath: string; logPath: string; }
 
 function stateRoot(): string {
   return process.env.HERDR_F1_STATE_DIR
@@ -33,7 +33,6 @@ export function instancePaths(target: InstanceTarget): InstancePaths {
   const root = stateRoot();
   const key = instanceKey(target);
   return {
-    stateRoot: root,
     recordPath: path.join(root, 'instances', `${key}.json`),
     lockPath: path.join(root, 'locks', `${key}.lock`),
     logPath: path.join(root, 'logs', `${key}.log`),

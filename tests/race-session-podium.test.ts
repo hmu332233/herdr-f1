@@ -15,7 +15,7 @@ describe('finish and podium', () => {
     expect(presentation.headerLap).toBe(58);
     expect(presentation.podium).not.toBeNull();
     expect(presentation.podium!.grandPrix).toBe(1);
-    expect(presentation.podium!.top[0]).toMatchObject({ rank: 1, teamID: 'ws-1', label: 'alpha' });
+    expect(presentation.podium!.top[0]).toMatchObject({ rank: 1, label: 'alpha' });
     expect(presentation.podium!.top[0].distance).toBeCloseTo(58, 6);
     // Official distance is frozen during the podium.
     tickTo(session, now, now + 4);
@@ -66,12 +66,11 @@ describe('finish and podium', () => {
     let now = tickTo(session, 0, RACE_SECONDS);
     session.applySnapshot(snap(team('ws-1', 'alpha', [agent('t1', 'working'), agent('t9', 'working')])), now);
     let queued = entryById(session.presentation(), 't9');
-    expect(queued.isQueuedNextGrid).toBe(true);
     expect(queued.statusText).toBe('NEXT GRID');
     expect(queued.placement.kind).toBe('nextGrid');
     now = tickTo(session, now, now + RaceRules.podiumDuration + 1);
     queued = entryById(session.presentation(), 't9');
-    expect(queued.isQueuedNextGrid).toBe(false);
+    expect(queued.placement.kind).toBe('track');
     // Reset onto the fresh grid at zero; the extra tick past the 8 s podium
     // boundary lets it score a fraction of a lap — the point is it did not
     // carry the finished race's distance.

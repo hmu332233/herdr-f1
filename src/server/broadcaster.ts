@@ -47,7 +47,7 @@ export function createRaceBroadcaster(
   }
 
   function buildSync(): SyncMessage {
-    return { type: 'sync', serverTime: clock(), ...session.presentation() };
+    return { type: 'sync', ...session.presentation() };
   }
 
   return { start, stop, addClient, removeClient, tick, buildSync };
