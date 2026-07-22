@@ -4,6 +4,7 @@ import type { AgentStatus, ConnectionState } from '../shared/presentation.js';
 import type { SourceAgent, SourceSnapshot } from './herdr/types.js';
 
 export const FIXTURE_NAMES = ['grid', 'dense', 'redflag', 'error', 'podium'] as const;
+export type FixtureName = (typeof FIXTURE_NAMES)[number];
 
 /** Deterministic grids used to review the dashboard without a live herdr. */
 export function loadFixture(name: string, session: RaceSession): void {

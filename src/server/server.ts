@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { setImmediate } from 'node:timers/promises';
+import { setImmediate as nextImmediate } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import type { RaceBroadcaster } from './broadcaster.js';
 import type { ClientMessage } from '../shared/protocol.js';
@@ -62,6 +62,7 @@ export async function startServer(options: ServerOptions): Promise<DashboardServ
       new Promise(resolve => {
         sockets.close();
         for (const client of sockets.clients) client.terminate();
+        server.closeAllConnections();
         server.close(() => resolve());
       }),
   };
@@ -72,16 +73,18 @@ function serveStatic(webRoot: string, request: http.IncomingMessage, response: h
   const relative = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
   const filePath = path.join(webRoot, path.normalize(relative));
   if (!filePath.startsWith(webRoot + path.sep) && filePath !== path.join(webRoot, 'index.html')) {
-    response.writeHead(404);
+    response.writeHead(404, { connection: 'close' });
     response.end('not found');
     return;
   }
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    response.writeHead(404);
+    response.writeHead(404, { connection: 'close' });
     response.end('not found');
     return;
   }
-  response.writeHead(200, { 'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream' });
+  response.writeHead(200, {
+    'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream', connection: 'close',
+  });
   fs.createReadStream(filePath).pipe(response);
 }
 
@@ -105,7 +108,7 @@ async function listenOnFreePort(server: http.Server, preferred: number): Promise
       return port;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
-      await setImmediate();
+      await nextImmediate();
     }
   }
   throw new Error(`no free port between ${preferred} and ${preferred + 19}`);

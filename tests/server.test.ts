@@ -14,7 +14,9 @@ type Dashboard = Awaited<ReturnType<typeof startServer>>;
 let dashboard: Dashboard | null = null;
 let webRoot = '';
 
-async function makeServer(onFocus: (id: string) => void = () => {}): Promise<Dashboard> {
+async function makeServer(
+  onFocus: (id: string) => void = () => {},
+): Promise<Dashboard> {
   webRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-f1-web-'));
   fs.writeFileSync(path.join(webRoot, 'index.html'), '<!doctype html><title>Herdr F1</title>');
   fs.writeFileSync(path.join(webRoot, 'app.js'), 'console.log(1)');

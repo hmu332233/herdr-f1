@@ -1,0 +1,18 @@
+id = "dev.minung.herdr-f1"
+name = "Herdr F1"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "Open and stop a live browser Grand Prix for coding agents in this Herdr session."
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "open"
+title = "Open F1 Dashboard"
+description = "Start or reopen the Herdr F1 browser dashboard for this Herdr session."
+command = ["node", "bin/herdr-f1.js", "start", "--open"]
+
+[[actions]]
+id = "stop"
+title = "Stop F1 Dashboard"
+description = "Stop the Herdr F1 background dashboard for this Herdr session."
+command = ["node", "bin/herdr-f1.js", "stop"]

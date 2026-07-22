@@ -1,112 +1,85 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { createRaceBroadcaster } from './broadcaster.js';
-import { createRaceSession } from './race-session.js';
-import { startServer } from './server.js';
-import { createHerdrClient, defaultSocketPath, type HerdrClient } from './herdr/client.js';
-import { FIXTURE_NAMES, loadFixture } from './fixtures.js';
+import { parseArgs as parseNodeArgs } from 'node:util';
+import { ensureDaemon, runDaemon, statusDaemon, stopDaemon } from './daemon.js';
+import { FIXTURE_NAMES, type FixtureName } from './fixtures.js';
+import { defaultSocketPath } from './herdr/client.js';
+import { targetLabel, type InstanceTarget } from './target.js';
 
-export interface CliOptions {
-  port: number;
-  open: boolean;
-  fixture: string | null;
-  socket: string;
-}
+export type CliCommand =
+  | { kind: 'start'; target: InstanceTarget; port: number; open: boolean }
+  | { kind: 'stop'; target: InstanceTarget }
+  | { kind: 'status'; target: InstanceTarget }
+  | { kind: 'daemon'; target: InstanceTarget; port: number };
 
-const USAGE = `Usage: herdr-f1 [start] [--port <n>] [--no-open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]`;
+const USAGE = `Usage:
+  herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
+  herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
+  herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]`;
 class UsageError extends Error {}
 
-export function parseArgs(argv: string[]): CliOptions {
-  const rest = argv[0] === 'start' ? argv.slice(1) : argv;
-  const options: CliOptions = { port: 4158, open: true, fixture: null, socket: defaultSocketPath };
-  for (let index = 0; index < rest.length; index += 1) {
-    switch (rest[index]) {
-      case '--port': {
-        const value = Number(rest[++index]);
-        if (!Number.isInteger(value) || value <= 0 || value > 65535) throw new UsageError(USAGE);
-        options.port = value;
-        break;
-      }
-      case '--no-open':
-        options.open = false;
-        break;
-      case '--fixture': {
-        const name = rest[++index];
-        if (!name || !(FIXTURE_NAMES as readonly string[]).includes(name)) throw new UsageError(USAGE);
-        options.fixture = name;
-        break;
-      }
-      case '--socket': {
-        const value = rest[++index];
-        if (!value) throw new UsageError(USAGE);
-        options.socket = value;
-        break;
-      }
-      default:
-        throw new UsageError(USAGE);
-    }
+export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
+  try {
+    const { values, positionals } = parseNodeArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: true,
+      options: {
+        port: { type: 'string' },
+        open: { type: 'boolean' },
+        socket: { type: 'string' },
+        fixture: { type: 'string' },
+      },
+    });
+    const command = positionals[0] ?? 'start';
+    if (positionals.length > 1 || !['start', 'stop', 'status', '__daemon'].includes(command)) throw new UsageError(USAGE);
+    const starts = command === 'start' || command === '__daemon';
+    if ((!starts && values.port !== undefined) || (command !== 'start' && values.open)) throw new UsageError(USAGE);
+    const port = Number(values.port ?? 4158);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError(USAGE);
+    if (values.fixture && !(FIXTURE_NAMES as readonly string[]).includes(values.fixture)) throw new UsageError(USAGE);
+    if (values.fixture && values.socket) throw new UsageError(USAGE);
+    const target: InstanceTarget = values.fixture
+      ? { kind: 'fixture', name: values.fixture as FixtureName }
+      : { kind: 'herdr', socketPath: values.socket ?? env.HERDR_SOCKET_PATH ?? defaultSocketPath };
+    if (command === 'stop' || command === 'status') return { kind: command, target };
+    if (command === '__daemon') return { kind: 'daemon', target, port };
+    return { kind: 'start', target, port, open: values.open ?? false };
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
+    throw new UsageError(USAGE);
   }
-  return options;
 }
 
-/** Monotonic seconds since process start — the session's time base. Fixtures
- *  pre-drive the session with their own larger timestamps; RaceSession clamps
- *  the backwards/oversized first step, so mixing the two is safe. */
-export const monotonicSeconds = (): number => performance.now() / 1000;
-
 export async function run(argv: string[]): Promise<void> {
-  let options: CliOptions;
-  try {
-    options = parseArgs(argv);
-  } catch (error) {
-    if (error instanceof UsageError) {
-      console.error(error.message);
-      process.exitCode = 2;
-      return;
-    }
+  let command: CliCommand;
+  try { command = parseArgs(argv); }
+  catch (error) {
+    if (error instanceof UsageError) { console.error(error.message); process.exitCode = 2; return; }
     throw error;
   }
-
-  const session = createRaceSession();
-  const broadcaster = createRaceBroadcaster(session, monotonicSeconds);
-  let client: HerdrClient | null = null;
-  if (options.fixture) {
-    loadFixture(options.fixture, session);
-  } else {
-    client = createHerdrClient({ socketPath: options.socket });
-    client.start(update => session.apply(update, monotonicSeconds()));
+  if (command.kind === 'daemon') { await runDaemon(command.target, command.port); return; }
+  if (command.kind === 'stop') {
+    const stopped = await stopDaemon(command.target);
+    console.log(stopped ? 'Herdr F1 stopped.' : 'Herdr F1 is not running.');
+    return;
   }
-
-  // dist/server/cli.js → ../web = dist/web (built by `vite build`).
-  const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
-  const dashboard = await startServer({
-    port: options.port,
-    webRoot,
-    broadcaster,
-    onFocus: terminalID => {
-      // Focus failure must not fabricate an agent state transition.
-      client?.focus(terminalID).catch(() => {});
-    },
-  });
-  broadcaster.start();
-
-  const url = `http://127.0.0.1:${dashboard.port}`;
-  console.log(`Herdr F1 · ${url}${options.fixture ? ` · fixture: ${options.fixture}` : ''}`);
-  console.log('Press Ctrl+C to stop.');
-  if (options.open) openBrowser(url);
-
-  const shutdown = () => {
-    broadcaster.stop();
-    client?.stop();
-    void dashboard.close().then(() => process.exit(0));
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  if (command.kind === 'status') {
+    const record = await statusDaemon(command.target);
+    if (!record) { console.log(`Herdr F1 is stopped · ${targetLabel(command.target)}`); process.exitCode = 1; return; }
+    console.log(`Herdr F1 is running · ${record.url}`);
+    console.log(`PID ${record.pid} · ${targetLabel(record.target)}`);
+    console.log(`Log ${record.logPath}`);
+    return;
+  }
+  const result = await ensureDaemon({ target: command.target, port: command.port });
+  console.log(`Herdr F1 · ${result.record.url}${result.reused ? ' · already running' : ''}`);
+  if (command.open) openBrowser(result.record.url);
+  else console.log(`Open ${result.record.url} in your browser.`);
 }
 
 function openBrowser(url: string): void {
-  const command =
-    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-  spawn(command, [url], { stdio: 'ignore', detached: true, shell: process.platform === 'win32' }).unref();
+  const command = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const child = spawn(command, [url], { stdio: 'ignore', detached: true });
+  child.once('error', () => console.error(`Could not open a browser. Open ${url} manually.`));
+  child.unref();
 }

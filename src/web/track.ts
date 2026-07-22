@@ -81,6 +81,10 @@ export function createTrackRenderer(
   let staticSignature = '';
   let pitBoxes = new Map<string, CircuitPoint>();
   const markers = new Map<string, MarkerRuntime>();
+  // Entries present in the first sync are already in the race. New browser
+  // sessions must render them at their authoritative position, while agents
+  // that join later still get the pit-exit animation.
+  let initialEntryIDs: Set<string> | null = null;
   const smoke = new Map<string, { particles: SmokeParticle[]; lastSpawn: number }>();
   let hits: Array<{ id: string; x: number; y: number }> = [];
 
@@ -98,6 +102,9 @@ export function createTrackRenderer(
   });
 
   function setSync(nextSync: SyncMessage, receivedAtMs: number): void {
+    if (initialEntryIDs === null) {
+      initialEntryIDs = new Set(nextSync.teams.flatMap(team => team.entries.map(entry => entry.id)));
+    }
     sync = nextSync;
     receivedAt = receivedAtMs;
   }
@@ -181,13 +188,19 @@ export function createTrackRenderer(
       );
       let marker = markers.get(entry.id);
       if (!marker) {
-        // A newly discovered circulating car always joins from its team pit.
-        // This gives first appearance the same stable departure as idle → working.
-        const spawn = target.kind === 'circuit'
+        const isInitialEntry = initialEntryIDs?.delete(entry.id) ?? false;
+        // A page reload receives an already-running race as its first sync:
+        // place those cars at the authoritative circuit progress. Entries
+        // discovered later are genuinely new and still join from the pit.
+        const spawn = !isInitialEntry && target.kind === 'circuit'
           ? pitTarget(entry.teamID, pitSlots.get(entry.id) ?? 0)
           : target;
         marker = {
-          phase: 'parked', transition: null, progress: null,
+          phase: isInitialEntry && target.kind === 'circuit' ? 'racing' : 'parked',
+          transition: null,
+          progress: isInitialEntry && target.kind === 'circuit'
+            ? progressByID.get(entry.id) ?? null
+            : null,
           lastFrameAt: nowMs, speed: entry.displaySpeed, x: spawn.x, y: spawn.y,
         };
         markers.set(entry.id, marker);
