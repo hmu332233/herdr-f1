@@ -3,10 +3,19 @@
   "version": "0.1.0",
   "type": "module",
   "description": "An F1-style dashboard for your Herdr agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hmu332233/herdr-f1.git"
+  },
+  "homepage": "https://github.com/hmu332233/herdr-f1#readme",
+  "bugs": {
+    "url": "https://github.com/hmu332233/herdr-f1/issues"
+  },
   "bin": {
     "herdr-f1": "bin/herdr-f1.js"
   },
   "files": [
+    "assets",
     "bin",
     "dist",
     "README.md",

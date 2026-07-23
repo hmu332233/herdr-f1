@@ -6,7 +6,7 @@
 
 Herdr F1은 Herdr에서 실행 중인 에이전트의 상태를 F1 레이스로 시각화합니다.
 
-![Herdr workspace와 코딩 에이전트를 팀과 차량으로 보여 주는 Herdr F1 대시보드](docs/images/herdr-f1-dashboard.gif)
+![Herdr workspace와 코딩 에이전트를 팀과 차량으로 보여 주는 Herdr F1 대시보드](assets/herdr-f1-dashboard.gif)
 
 각 `workspace`는 팀으로, `agent terminal`은 레이스카로 표현됩니다. 에이전트가 작업
 중이면 서킷을 달리고, 쉬면 피트에 머물며, 막히면 트랙 위에 멈춥니다. 차량이나

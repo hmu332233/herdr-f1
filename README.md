@@ -6,7 +6,7 @@
 
 Herdr F1 visualizes the status of your running Herdr agents as an F1 race.
 
-![Herdr F1 dashboard showing Herdr workspaces and coding agents as teams and race cars](docs/images/herdr-f1-dashboard.gif)
+![Herdr F1 dashboard showing Herdr workspaces and coding agents as teams and race cars](assets/herdr-f1-dashboard.gif)
 
 Each `workspace` becomes a team, and each `agent terminal` becomes a race car. Agents
 race around the circuit while working, wait in the pits while idle, and stop on the
