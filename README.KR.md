@@ -23,17 +23,18 @@ Herdr F1은 Herdr에서 실행 중인 에이전트의 상태를 F1 레이스로 
 - 실행 중인 [Herdr](https://github.com/ogulcancelik/herdr) 0.7.4 이상
 - Node.js 20 이상
 
-Herdr F1 플러그인을 설치합니다.
+Herdr 플러그인과 CLI 중 원하는 방식을 선택합니다.
 
 ```sh
+# Herdr 플러그인
 herdr plugin install hmu332233/herdr-f1
-```
-
-Herdr F1을 엽니다.
-
-```sh
 herdr plugin action invoke dev.minung.herdr-f1.open
+
+# CLI
+npx herdr-f1 --open
 ```
+
+### Herdr 플러그인
 
 브라우저가 열리고 현재 Herdr 세션의 에이전트가 레이스에 합류합니다. 대시보드를
 종료하려면 다음 액션을 실행합니다.
@@ -45,7 +46,7 @@ herdr plugin action invoke dev.minung.herdr-f1.stop
 플러그인에는 실행에 필요한 서버와 웹 파일이 포함되어 있어 별도의 설치나 빌드가
 필요하지 않습니다.
 
-### 단축키로 열기
+#### 단축키로 열기
 
 `~/.config/herdr/config.toml`에 다음 설정을 추가하면 `prefix+f`로 대시보드를 열 수
 있습니다. 기본 prefix는 `ctrl+b`입니다.
@@ -64,16 +65,10 @@ description = "open F1 dashboard"
 herdr server reload-config
 ```
 
-## CLI
+### CLI
 
-Herdr 플러그인을 설치하지 않고 CLI로 대시보드를 실행할 수도 있습니다. 이 경우에도
-Herdr 세션은 실행 중이어야 합니다.
-
-```sh
-npx herdr-f1 --open
-```
-
-`--open`을 빼면 브라우저를 열지 않고 접속할 로컬 URL만 출력합니다.
+Herdr 플러그인을 설치하지 않고 대시보드를 바로 실행할 수 있습니다. `--open`을
+빼면 브라우저를 열지 않고 접속할 로컬 URL만 출력합니다.
 
 ```sh
 npx herdr-f1 [start] [--port <port>] [--open] [--socket <path>]

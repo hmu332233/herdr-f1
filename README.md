@@ -24,17 +24,18 @@ Requirements:
 - A running [Herdr](https://github.com/ogulcancelik/herdr) 0.7.4 or later
 - Node.js 20 or later
 
-Install the Herdr F1 plugin:
+Choose either the Herdr plugin or the CLI.
 
 ```sh
+# Herdr plugin
 herdr plugin install hmu332233/herdr-f1
-```
-
-Open Herdr F1:
-
-```sh
 herdr plugin action invoke dev.minung.herdr-f1.open
+
+# CLI
+npx herdr-f1 --open
 ```
+
+### Herdr plugin
 
 Your browser will open, and agents in the current Herdr session will join the race.
 To stop the dashboard, run:
@@ -46,7 +47,7 @@ herdr plugin action invoke dev.minung.herdr-f1.stop
 The plugin includes the server and web assets required to run, so no separate
 installation or build is needed.
 
-### Open with a keyboard shortcut
+#### Open with a keyboard shortcut
 
 Add the following to `~/.config/herdr/config.toml` to open the dashboard with
 `prefix+f`. The default prefix is `ctrl+b`.
@@ -65,16 +66,10 @@ Apply the updated configuration to the running Herdr session:
 herdr server reload-config
 ```
 
-## CLI
+### CLI
 
-You can also run the dashboard from the CLI without installing the Herdr plugin. A
-Herdr session must still be running.
-
-```sh
-npx herdr-f1 --open
-```
-
-Omit `--open` to print the local URL without opening a browser.
+Run the dashboard directly without installing the Herdr plugin. Omit `--open` to
+print the local URL without opening a browser.
 
 ```sh
 npx herdr-f1 [start] [--port <port>] [--open] [--socket <path>]
