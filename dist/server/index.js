@@ -5352,13 +5352,10 @@ function standardTeams() {
         ['ws-herdr', 'herdr', [
                 agent('t1', 'core', 'claude', 'working'),
                 agent('t2', 'socket', 'codex', 'working', true),
-                agent('t3', 'tests', 'claude', 'idle'),
             ]],
-        ['ws-pet', 'agent-pet', [
+        ['ws-pet', 'herdr-f1', [
                 agent('t4', 'dashboard', 'claude', 'working'),
-                agent('t5', 'track', 'claude', 'done'),
                 agent('t6', 'standings', 'codex', 'blocked'),
-                agent('t7', 'fixtures', 'claude', 'idle'),
             ]],
         ['ws-console', 'console-api', [
                 agent('t8', 'billing', 'codex', 'working'),
@@ -5367,7 +5364,6 @@ function standardTeams() {
         ['ws-infra', 'infra-tools', [
                 agent('t10', 'deploy', 'claude', 'working'),
                 agent('t11', 'monitor', 'aider', 'done'),
-                agent('t12', 'runbook', 'codex', 'working'),
             ]],
     ];
 }
@@ -5570,9 +5566,10 @@ function createHerdrClient(options = {}) {
         eventSocket = null;
     }
     async function focus(terminalID) {
-        // Resolve the terminal's current pane; herdr focuses by pane. Fall back to
-        // the terminal id if the mapping is missing (e.g. focus before first sync).
-        const target = paneByTerminal.get(terminalID) ?? terminalID;
+        // Only focus terminals present in the latest authoritative snapshot.
+        const target = paneByTerminal.get(terminalID);
+        if (!target)
+            return;
         requestSequence += 1;
         const envelope = await requestOnce({
             id: `focus-${requestSequence}`,
@@ -6328,7 +6325,22 @@ async function startServer(options) {
     const webRoot = external_node_path_default().resolve(options.webRoot);
     const server = external_node_http_default().createServer((request, response) => serveStatic(webRoot, request, response));
     const port = await listenOnFreePort(server, options.port);
-    const sockets = new websocket_server({ server, path: '/ws' });
+    const sockets = new websocket_server({
+        noServer: true,
+        maxPayload: 4096,
+        perMessageDeflate: false,
+    });
+    const allowedOrigin = `http://127.0.0.1:${port}`;
+    server.on('upgrade', (request, socket, head) => {
+        if (request.url !== '/ws' || request.headers.origin !== allowedOrigin) {
+            socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+            socket.destroy();
+            return;
+        }
+        sockets.handleUpgrade(request, socket, head, client => {
+            sockets.emit('connection', client, request);
+        });
+    });
     sockets.on('connection', socket => {
         const send = (json) => {
             if (socket.readyState === socket.OPEN)
@@ -6374,7 +6386,9 @@ function serveStatic(webRoot, request, response) {
         return;
     }
     response.writeHead(200, {
-        'content-type': MIME[external_node_path_default().extname(filePath)] ?? 'application/octet-stream', connection: 'close',
+        'content-type': MIME[external_node_path_default().extname(filePath)] ?? 'application/octet-stream',
+        'cache-control': 'no-store',
+        connection: 'close',
     });
     external_node_fs_default().createReadStream(filePath).pipe(response);
 }

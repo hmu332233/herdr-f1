@@ -35,7 +35,22 @@ export async function startServer(options: ServerOptions): Promise<DashboardServ
   const server = http.createServer((request, response) => serveStatic(webRoot, request, response));
   const port = await listenOnFreePort(server, options.port);
 
-  const sockets = new WebSocketServer({ server, path: '/ws' });
+  const sockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: 4096,
+    perMessageDeflate: false,
+  });
+  const allowedOrigin = `http://127.0.0.1:${port}`;
+  server.on('upgrade', (request, socket, head) => {
+    if (request.url !== '/ws' || request.headers.origin !== allowedOrigin) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    sockets.handleUpgrade(request, socket, head, client => {
+      sockets.emit('connection', client, request);
+    });
+  });
   sockets.on('connection', socket => {
     const send = (json: string) => {
       if (socket.readyState === socket.OPEN) socket.send(json);
@@ -81,7 +96,9 @@ function serveStatic(webRoot: string, request: http.IncomingMessage, response: h
     return;
   }
   response.writeHead(200, {
-    'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream', connection: 'close',
+    'content-type': MIME[path.extname(filePath)] ?? 'application/octet-stream',
+    'cache-control': 'no-store',
+    connection: 'close',
   });
   fs.createReadStream(filePath).pipe(response);
 }

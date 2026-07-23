@@ -7,13 +7,13 @@ describe('fixtures', () => {
     expect([...FIXTURE_NAMES]).toEqual(['grid', 'dense', 'redflag', 'error', 'podium']);
   });
 
-  it('grid: 4 teams, 12 cars, all four statuses, live and spread out', () => {
+  it('grid: 4 teams, 8 cars, all four statuses, live and spread out', () => {
     const session = createRaceSession();
     loadFixture('grid', session);
     const presentation = session.presentation();
     expect(presentation.teams).toHaveLength(4);
     const entries = presentation.teams.flatMap(t => t.entries);
-    expect(entries).toHaveLength(12);
+    expect(entries).toHaveLength(8);
     expect(new Set(entries.map(e => e.status))).toEqual(new Set(['working', 'idle', 'done', 'blocked']));
     expect(presentation.connection.kind).toBe('live');
     expect(presentation.overlay.kind).toBe('none');

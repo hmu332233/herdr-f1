@@ -77,9 +77,9 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
   }
 
   async function focus(terminalID: string): Promise<void> {
-    // Resolve the terminal's current pane; herdr focuses by pane. Fall back to
-    // the terminal id if the mapping is missing (e.g. focus before first sync).
-    const target = paneByTerminal.get(terminalID) ?? terminalID;
+    // Only focus terminals present in the latest authoritative snapshot.
+    const target = paneByTerminal.get(terminalID);
+    if (!target) return;
     requestSequence += 1;
     const envelope = await requestOnce({
       id: `focus-${requestSequence}`,

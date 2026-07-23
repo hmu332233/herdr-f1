@@ -7,7 +7,7 @@ function rawSnapshot(overrides: Record<string, unknown> = {}): Record<string, un
     protocol: 16,
     workspaces: [
       { workspace_id: 'ws-a', number: 1, label: 'herdr' },
-      { workspace_id: 'ws-b', number: 2, label: 'agent-pet' },
+      { workspace_id: 'ws-b', number: 2, label: 'herdr-f1' },
       { workspace_id: 'ws-empty', number: 3, label: 'no-agents' },
     ],
     tabs: [
@@ -44,7 +44,7 @@ describe('projectSnapshot', () => {
   it('projects workspaces with agents into ordered teams', () => {
     const snapshot = projectSnapshot(rawSnapshot());
     expect(snapshot.teams.map(team => team.id)).toEqual(['ws-a', 'ws-b']);
-    expect(snapshot.teams.map(team => team.label)).toEqual(['herdr', 'agent-pet']);
+    expect(snapshot.teams.map(team => team.label)).toEqual(['herdr', 'herdr-f1']);
     expect(snapshot.teams[0].agents.map(agent => agent.terminalID)).toEqual(['t1', 't2']);
     expect(snapshot.teams[1].agents.map(agent => agent.terminalID)).toEqual(['t3', 't5']);
   });

@@ -115,4 +115,14 @@ describe('HerdrClient', () => {
     // its current pane id (pane-t1) from the latest snapshot.
     expect(fake.focusRequests[0].params).toEqual({ target: 'pane-t1' });
   });
+
+  it('ignores focus requests for terminals outside the latest snapshot', async () => {
+    fake = await FakeHerdr.start(rawSnapshot([rawAgent('t1', 'working')]));
+    const c = collector();
+    const herdrClient = makeClient(fake.socketPath);
+    herdrClient.start(c.push);
+    await waitUntil(() => kinds(c).includes('live'));
+    await herdrClient.focus('not-in-session');
+    expect(fake.focusRequests).toHaveLength(0);
+  });
 });

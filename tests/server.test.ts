@@ -39,6 +39,7 @@ describe('startServer', () => {
     const home = await fetch(`http://127.0.0.1:${port}/`);
     expect(home.status).toBe(200);
     expect(home.headers.get('content-type')).toContain('text/html');
+    expect(home.headers.get('cache-control')).toBe('no-store');
     expect(await home.text()).toContain('Herdr F1');
     const js = await fetch(`http://127.0.0.1:${port}/app.js`);
     expect(js.status).toBe(200);
@@ -54,7 +55,9 @@ describe('startServer', () => {
   it('sends a sync to every new websocket client and routes focus messages', async () => {
     const focused: string[] = [];
     const { port } = await makeServer(id => focused.push(id));
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      origin: `http://127.0.0.1:${port}`,
+    });
     const messages: SyncMessage[] = [];
     socket.on('message', raw => messages.push(JSON.parse(String(raw))));
     await waitUntil(() => messages.length >= 1);
@@ -65,6 +68,22 @@ describe('startServer', () => {
     expect(focused[0]).toBe('t6');
     socket.send('not json'); // must not crash the server
     socket.close();
+  });
+
+  it('rejects websocket connections from other origins', async () => {
+    const { port } = await makeServer();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      origin: 'https://example.com',
+    });
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      socket.once('unexpected-response', (_request, response) => {
+        response.resume();
+        resolve(response.statusCode);
+      });
+      socket.once('open', () => reject(new Error('cross-origin websocket was accepted')));
+      socket.once('error', () => {});
+    });
+    expect(status).toBe(403);
   });
 
   it('probes the next port when the preferred one is taken', async () => {

@@ -72,13 +72,10 @@ function standardTeams(): TeamSpec[] {
     ['ws-herdr', 'herdr', [
       agent('t1', 'core', 'claude', 'working'),
       agent('t2', 'socket', 'codex', 'working', true),
-      agent('t3', 'tests', 'claude', 'idle'),
     ]],
-    ['ws-pet', 'agent-pet', [
+    ['ws-pet', 'herdr-f1', [
       agent('t4', 'dashboard', 'claude', 'working'),
-      agent('t5', 'track', 'claude', 'done'),
       agent('t6', 'standings', 'codex', 'blocked'),
-      agent('t7', 'fixtures', 'claude', 'idle'),
     ]],
     ['ws-console', 'console-api', [
       agent('t8', 'billing', 'codex', 'working'),
@@ -87,7 +84,6 @@ function standardTeams(): TeamSpec[] {
     ['ws-infra', 'infra-tools', [
       agent('t10', 'deploy', 'claude', 'working'),
       agent('t11', 'monitor', 'aider', 'done'),
-      agent('t12', 'runbook', 'codex', 'working'),
     ]],
   ];
 }
