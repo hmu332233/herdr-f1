@@ -1,6 +1,6 @@
 {
   "name": "herdr-f1",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "An F1-style dashboard for your Herdr agents.",
   "repository": {
