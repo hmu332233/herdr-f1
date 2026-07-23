@@ -2,7 +2,7 @@
   "name": "herdr-f1",
   "version": "0.1.0",
   "type": "module",
-  "description": "Herdr F1 — watch your coding agents race in the browser",
+  "description": "An F1-style dashboard for your Herdr agents.",
   "bin": {
     "herdr-f1": "bin/herdr-f1.js"
   },
