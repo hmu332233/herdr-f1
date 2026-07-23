@@ -1,0 +1,19 @@
+# Development sources and configuration
+src/
+tests/
+docs/
+tsconfig.json
+vite.config.ts
+vitest.config.ts
+
+# Local tooling and generated test output
+.github/
+.agents/
+.codex/
+coverage/
+
+# Local environment and editor/OS files
+.env
+.env.*
+.DS_Store
+*.log
