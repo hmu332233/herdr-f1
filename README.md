@@ -1,50 +1,55 @@
 # Herdr F1
 
-Herdr에서 실행 중인 코딩 에이전트를 F1 레이스로 보여 주는 로컬 웹 대시보드입니다.
+**An F1-style dashboard for your Herdr agents.**
 
-![Herdr workspace와 코딩 에이전트를 팀과 차량으로 보여 주는 Herdr F1 대시보드](docs/images/herdr-f1-dashboard.gif)
+[한국어](README.KR.md)
 
-Herdr의 `workspace`는 팀으로, `agent terminal`은 차량으로 표현됩니다. 에이전트가 작업
-중이면 달리고, 쉬면 피트에 머물며, 막히면 서킷 위에 멈춥니다. 차량이나 순위표를
-선택하면 해당 Herdr 터미널로 바로 이동할 수 있습니다.
+Herdr F1 visualizes the status of your running Herdr agents as an F1 race.
 
-랩, 순위, 점수는 관전을 위해 만든 가상 데이터입니다. 생산성이나 에이전트 성능을
-측정하지 않습니다.
+![Herdr F1 dashboard showing Herdr workspaces and coding agents as teams and race cars](docs/images/herdr-f1-dashboard.gif)
 
-## 빠른 시작
+Each `workspace` becomes a team, and each `agent terminal` becomes a race car. Agents
+race around the circuit while working, wait in the pits while idle, and stop on the
+track when blocked. Select a car or a row in the standings to jump directly to its
+Herdr terminal.
 
-요구 사항:
+Laps, standings, and points are fictional data created for spectating. They do not
+measure productivity or agent performance.
 
-- macOS 또는 Linux
-- 실행 중인 [Herdr](https://github.com/ogulcancelik/herdr) 0.7.4 이상
-- Node.js 20 이상
+## Quick start
 
-Herdr F1 플러그인을 설치합니다.
+Requirements:
+
+- macOS or Linux
+- A running [Herdr](https://github.com/ogulcancelik/herdr) 0.7.4 or later
+- Node.js 20 or later
+
+Install the Herdr F1 plugin:
 
 ```sh
 herdr plugin install hmu332233/herdr-f1
 ```
 
-Herdr F1을 엽니다.
+Open Herdr F1:
 
 ```sh
 herdr plugin action invoke dev.minung.herdr-f1.open
 ```
 
-브라우저가 열리고 현재 Herdr 세션의 에이전트가 레이스에 합류합니다. 대시보드를
-종료하려면 다음 액션을 실행합니다.
+Your browser will open, and agents in the current Herdr session will join the race.
+To stop the dashboard, run:
 
 ```sh
 herdr plugin action invoke dev.minung.herdr-f1.stop
 ```
 
-플러그인에는 실행에 필요한 서버와 웹 파일이 포함되어 있어 별도의 설치나 빌드가
-필요하지 않습니다.
+The plugin includes the server and web assets required to run, so no separate
+installation or build is needed.
 
-### 단축키로 열기
+### Open with a keyboard shortcut
 
-`~/.config/herdr/config.toml`에 다음 설정을 추가하면 `prefix+f`로 대시보드를 열 수
-있습니다. 기본 prefix는 `ctrl+b`입니다.
+Add the following to `~/.config/herdr/config.toml` to open the dashboard with
+`prefix+f`. The default prefix is `ctrl+b`.
 
 ```toml
 [[keys.command]]
@@ -54,7 +59,7 @@ command = "dev.minung.herdr-f1.open"
 description = "open F1 dashboard"
 ```
 
-설정을 추가한 뒤 실행 중인 Herdr에 반영합니다.
+Apply the updated configuration to the running Herdr session:
 
 ```sh
 herdr server reload-config
@@ -62,14 +67,14 @@ herdr server reload-config
 
 ## CLI
 
-Herdr 플러그인을 설치하지 않고 CLI로 대시보드를 실행할 수도 있습니다. 이 경우에도
-Herdr 세션은 실행 중이어야 합니다.
+You can also run the dashboard from the CLI without installing the Herdr plugin. A
+Herdr session must still be running.
 
 ```sh
 npx herdr-f1 --open
 ```
 
-`--open`을 빼면 브라우저를 열지 않고 접속할 로컬 URL만 출력합니다.
+Omit `--open` to print the local URL without opening a browser.
 
 ```sh
 npx herdr-f1 [start] [--port <port>] [--open] [--socket <path>]
@@ -77,38 +82,38 @@ npx herdr-f1 status [--socket <path>]
 npx herdr-f1 stop [--socket <path>]
 ```
 
-전역 설치한 경우에는 명령 앞의 `npx`를 생략할 수 있습니다. 기본 포트는 `4158`이며,
-이미 사용 중이면 다음 포트를 자동으로 찾습니다.
+If installed globally, you can omit `npx`. The default port is `4158`; if it is
+already in use, Herdr F1 automatically finds the next available port.
 
-## 동작 방식
+## How it works
 
-| Herdr 상태 | 대시보드 |
+| Herdr status | Dashboard |
 | --- | --- |
-| `working` | 서킷 주행 |
-| `idle` | 피트 대기 |
-| `done` | 주행 종료 |
-| `blocked` | 사고로 정지 |
+| `working` | Racing on the circuit |
+| `idle` | Waiting in the pits |
+| `done` | Finished racing |
+| `blocked` | Stopped after an incident |
 
-대시보드는 Herdr의 세션 상태를 사용하고, 차량을 선택할 때 터미널 포커스 명령만
-보냅니다. 터미널 출력이나 대화 내용은 수집하지 않으며 서버는 외부에 노출되지 않도록
-`127.0.0.1`에서만 실행됩니다.
+The dashboard reads Herdr session status and only sends a terminal-focus command
+when you select a car. It does not collect terminal output or conversation content,
+and the server binds only to `127.0.0.1` to prevent external access.
 
-## 문제 해결
+## Troubleshooting
 
-플러그인이 열리지 않으면 설치 상태와 최근 실행 로그를 확인합니다.
+If the plugin does not open, check its installation status and recent logs:
 
 ```sh
 herdr plugin list --plugin dev.minung.herdr-f1
 herdr plugin log list --plugin dev.minung.herdr-f1 --limit 20
 ```
 
-CLI로 실행한 대시보드의 상태와 URL은 다음 명령으로 확인할 수 있습니다.
+To check the status and URL of a dashboard started from the CLI, run:
 
 ```sh
 npx herdr-f1 status
 ```
 
-## 개발
+## Development
 
 ```sh
 npm install
@@ -117,10 +122,10 @@ npm run typecheck
 npm run build
 ```
 
-로컬 checkout을 Herdr에 연결하려면 다음 명령을 실행합니다.
+To connect a local checkout to Herdr, run:
 
 ```sh
 herdr plugin link .
 ```
 
-버그 리포트와 pull request를 환영합니다.
+Bug reports and pull requests are welcome.
