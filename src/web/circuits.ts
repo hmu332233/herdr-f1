@@ -191,7 +191,52 @@ const KOREA: CircuitDefinition = {
   pit: { entry: 21, exit: 24 },
 };
 
-export const CIRCUITS: readonly CircuitDefinition[] = [HERDR, SUZUKA, KOREA];
+/** Las Vegas Strip Circuit, derived from the layout's own SVG path data.
+ *
+ *  The source draws the track as a filled outline — two edge subpaths rather
+ *  than a centreline — but the stroke is only ~1.3 units wide against a
+ *  907-unit lap, so a single edge is the centreline at any render scale. The
+ *  outer edge is used; averaging the two would need per-corner correspondence
+ *  that arc-length pairing does not give around tight turns. */
+const LAS_VEGAS: CircuitDefinition = {
+  id: 'las-vegas',
+  name: 'LAS VEGAS STRIP',
+  flag: '🇺🇸',
+  points: [
+    // The Strip straight, running west along the bottom of the layout.
+    [0.464, 0.035], [0.363, 0.039], [0.299, 0.067],
+    // The long climb away from the Strip to the west end.
+    [0.194, 0.154], [0.077, 0.279], [0.035, 0.312],
+    // Left-hand sequence up the western edge.
+    [0.049, 0.413], [0.063, 0.457], [0.155, 0.537], [0.191, 0.595],
+    [0.199, 0.667], [0.201, 0.959],
+    // The tight complex across the top-left.
+    [0.250, 0.926], [0.259, 0.933], [0.268, 0.961], [0.293, 0.964],
+    [0.342, 0.930], [0.366, 0.865], [0.369, 0.705], [0.379, 0.691],
+    // The long straight east along the top.
+    [0.825, 0.709], [0.850, 0.730], [0.865, 0.766], [0.864, 0.799],
+    // Hook round the north-east corner.
+    [0.838, 0.904], [0.848, 0.937], [0.868, 0.937], [0.951, 0.761],
+    [0.965, 0.704],
+    // Down the eastern side and back onto the Strip.
+    [0.962, 0.142], [0.933, 0.088], [0.926, 0.041], [0.474, 0.035],
+  ],
+  // The traced edge's own bounding box: 282.8 × 175.1 units.
+  aspect: 1.6153,
+  // Wide layout: fill some of the frame height so the top-left complex and the
+  // western sequence have usable room.
+  fill: 0.5,
+  // Scaled from the source: a 2.24-unit stroke against a 907-unit lap.
+  trackWidth: 9,
+  markerRadius: 9,
+  spread: 1,
+  spreadAnchor: 0.5,
+  // Indices 31→1: the Strip straight, the flattest and longest run here, and
+  // where the circuit's start line and pit complex sit.
+  pit: { entry: 31, exit: 1 },
+};
+
+export const CIRCUITS: readonly CircuitDefinition[] = [HERDR, SUZUKA, KOREA, LAS_VEGAS];
 
 export const DEFAULT_CIRCUIT_ID = HERDR.id;
 

@@ -856,13 +856,27 @@ export function createTrackRenderer(
     // rather than facing each other across the lane. They go on the opposite
     // side from the lane, so they clear the bays.
     const captionShift = -laneSideY * 15 * ds;
+    // Which way the straight runs on screen. Las Vegas runs right-to-left, so
+    // the arrows and the side each caption sits on both have to follow travel
+    // rather than assume the entry is always the left-hand end.
+    const runsRight = layout.pitExit.x >= layout.pitEntry.x;
+    const arrow = runsRight ? '›››' : '‹‹‹';
     ctx.font = `600 7px ${FONT}`;
     ctx.fillStyle = palette.textMuted;
     ctx.textBaseline = 'middle';
-    ctx.textAlign = 'right';
-    ctx.fillText('PIT ENTRY  ›››', layout.pitEntry.x - 6 * ds, layout.pitEntry.y + captionShift);
-    ctx.textAlign = 'left';
-    ctx.fillText('›››  PIT EXIT', layout.pitExit.x + 6 * ds, layout.pitExit.y + captionShift);
+    // Each caption sits outboard of its own junction, pointing along the lap.
+    ctx.textAlign = runsRight ? 'right' : 'left';
+    ctx.fillText(
+      runsRight ? `PIT ENTRY  ${arrow}` : `${arrow}  PIT ENTRY`,
+      layout.pitEntry.x + (runsRight ? -6 : 6) * ds,
+      layout.pitEntry.y + captionShift,
+    );
+    ctx.textAlign = runsRight ? 'left' : 'right';
+    ctx.fillText(
+      runsRight ? `${arrow}  PIT EXIT` : `PIT EXIT  ${arrow}`,
+      layout.pitExit.x + (runsRight ? 6 : -6) * ds,
+      layout.pitExit.y + captionShift,
+    );
 
     ctx.save();
     ctx.translate(frame.originX, frame.originY);
