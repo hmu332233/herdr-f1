@@ -58,6 +58,38 @@ export interface EntryPresentation {
   showsNewStint: boolean;
 }
 
+/** Why a radio message fired. Derived purely from agent status transitions —
+ *  terminal output and conversation content are never read. */
+export type RadioKind =
+  | 'boxBox'      // working → idle
+  | 'greenAgain'  // idle → working
+  | 'incident'    // → blocked
+  | 'recovered'   // blocked → working or idle
+  | 'chequered'   // → done
+  | 'newStint'    // agent session replaced
+  | 'retired';    // gone from the authoritative snapshot
+
+/** One team-radio line. The text is generated race fiction in the same spirit
+ *  as laps and points; it is never an agent's actual output. */
+export interface RadioMessage {
+  /** Monotonic within a Grand Prix. The client's de-duplication key. */
+  id: number;
+  kind: RadioKind;
+  /** Durable terminal ID, so a radio line is an agent.focus target too. */
+  terminalID: string;
+  carNumber: number;
+  colorToken: TeamColorToken;
+  /** Workspace acting as the team, and the tab the agent runs in. */
+  teamLabel: string;
+  tabLabel: string;
+  lap: number;
+  text: string;
+  /** Wall-clock time the line was emitted, as `HH:MM:SS` in the server's local
+   *  zone. Preformatted because the race clock is monotonic — there is no
+   *  timestamp the browser could derive this from. */
+  timeText: string;
+}
+
 export interface TeamStanding {
   id: string;
   rank: number;
@@ -95,4 +127,8 @@ export interface RacePresentation {
   podium: PodiumResult | null;
   connection: ConnectionState;
   overlay: RaceOverlay;
+  /** Recent team radio, oldest first, capped at RaceRules.radioHistoryLimit.
+   *  Sync carries the whole window rather than deltas, so a reconnecting or
+   *  reloading browser recovers the backlog for free. */
+  radio: RadioMessage[];
 }

@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Herdr F1</title>
-  <script type="module" crossorigin src="./assets/index-CJyUQLD0.js"></script>
-  <link rel="stylesheet" crossorigin href="./assets/index-DYIhpMwo.css">
+  <script type="module" crossorigin src="./assets/index-2BREeqGR.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CDn9vuBt.css">
 </head>
 <body>
   <div id="app">
@@ -29,6 +29,19 @@
       <div id="standings-scroll">
         <div id="standings" role="list" aria-label="Constructors standings"></div>
         <div id="standings-empty">FORMATION LAP · AWAITING GRID</div>
+      </div>
+    </section>
+    <section id="radio-column">
+      <header class="chrome">
+        <button id="radio-toggle" type="button" aria-expanded="true" aria-controls="radio-scroll">
+          <span class="panel-title">TEAM RADIO</span>
+          <span id="radio-count" class="mono muted"></span>
+          <span id="radio-caret" aria-hidden="true"></span>
+        </button>
+      </header>
+      <div id="radio-scroll">
+        <div id="radio" role="log" aria-live="polite" aria-label="Team radio"></div>
+        <div id="radio-empty">RADIO SILENCE</div>
       </div>
     </section>
   </div>
