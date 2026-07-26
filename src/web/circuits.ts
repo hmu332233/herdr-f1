@@ -156,7 +156,7 @@ const SUZUKA: CircuitDefinition = {
  *  part of the lap; they are separate paths in the source and are left out. */
 const KOREA: CircuitDefinition = {
   id: 'korea',
-  name: 'KOREA',
+  name: 'KOREA INTERNATIONAL',
   flag: '🇰🇷',
   points: [
     // Out of the final corner onto the long left-hand section.
@@ -186,8 +186,9 @@ const KOREA: CircuitDefinition = {
   markerRadius: 9,
   spread: 1,
   spreadAnchor: 0.5,
-  // Indices 23→25: the long straight the source's pit path runs beside.
-  pit: { entry: 23, exit: 25 },
+  // Indices 21→24: the run down to turn 1 that the source's pit path lies
+  // alongside, and where the layout marks its start/finish line.
+  pit: { entry: 21, exit: 24 },
 };
 
 export const CIRCUITS: readonly CircuitDefinition[] = [HERDR, SUZUKA, KOREA];

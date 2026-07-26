@@ -133,7 +133,7 @@ body {
      letters. The names stay legible without it at this size. */
   letter-spacing: 0;
   cursor: pointer;
-  max-width: 190px;
+  max-width: 260px;
   text-overflow: ellipsis;
 }
 #circuit-select:hover { color: #fff; border-color: rgba(255, 255, 255, 0.18); }

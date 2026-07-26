@@ -54,6 +54,9 @@ interface CircuitLayout {
    *  a diagonal pit straight still gets a lane running alongside it rather than
    *  an axis-aligned box lying across the circuit. */
   laneFrame: { originX: number; originY: number; angle: number };
+  /** Lap fraction the chequered line is drawn at — just past pit exit, on the
+   *  pit straight, rather than at whatever point the circuit's list starts on. */
+  startFinishProgress: number;
 }
 
 export function createTrackRenderer(
@@ -186,6 +189,17 @@ export function createTrackRenderer(
         width: halfWidth * 2, height: 38 * ds,
       },
       laneFrame: { originX: laneCenterX, originY: laneY, angle },
+      // Midway along the pit straight, which is where published layouts draw
+      // it — alongside the pit buildings rather than at either junction.
+      // Measured as a forward walk from entry so it still lands inside the
+      // straight when that straddles progress 0, as it does on most layouts.
+      startFinishProgress: (
+        lengths[entryIndex] / lengths[line.length]
+        + forwardDistance(
+          lengths[entryIndex] / lengths[line.length],
+          lengths[exitIndex] / lengths[line.length],
+        ) * 0.5
+      ) % 1,
     };
   }
 
@@ -759,8 +773,14 @@ export function createTrackRenderer(
     return path;
   }
 
+  /** Chequered start/finish line, drawn just past pit exit.
+   *
+   *  Not at progress 0: that is wherever the circuit's point list happens to
+   *  begin, which for a traced layout can be halfway round the lap and nowhere
+   *  near the pits. A real start line sits on the pit straight, so it is placed
+   *  a short way after pit exit — which also matches where cars rejoin. */
   function drawStartFinish(ctx: CanvasRenderingContext2D, trackWidth: number): void {
-    const start = pointAt(0, layout.line, layout.lengths);
+    const start = pointAt(layout.startFinishProgress, layout.line, layout.lengths);
     const width = trackWidth * 0.42;
     const height = trackWidth + 2;
     const columns = 2;
@@ -808,24 +828,33 @@ export function createTrackRenderer(
     ctx.fill();
     ctx.stroke();
 
+    ctx.restore();
+
+    // The lane sits on one side of the pit straight; "PIT LANE" goes on its far
+    // side, in open space. Drawn upright in scene space rather than rotated with
+    // the box: a rotated caption crosses the bays on an angled lane, which is
+    // exactly where the parked cars are. Clearing the box means clearing its
+    // furthest corner, not its centre — on a rotated box the two differ by the
+    // half-length of the lane projected onto y.
+    const laneSideY = Math.sign(frame.originY - layout.trackY) || -1;
+    const boxReachY = Math.abs(halfWidth * Math.sin(frame.angle))
+      + Math.abs(halfHeight * Math.cos(frame.angle));
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
+    ctx.textBaseline = laneSideY < 0 ? 'bottom' : 'top';
     ctx.font = `700 8px ${FONT}`;
     ctx.fillStyle = palette.textMuted;
-    ctx.fillText('PIT LANE', 0, localY - 6 * ds);
-
-    ctx.restore();
+    ctx.fillText(
+      'PIT LANE',
+      frame.originX,
+      frame.originY + laneSideY * (boxReachY + 6 * ds),
+    );
 
     // Entry/exit captions label the points where the lane meets the circuit,
     // not the ends of the lane box: the box is narrower than the two captions
-    // laid side by side, so anchoring them to it makes them collide. Drawn in
-    // scene space, upright, offset away from the lane so they clear the bays.
-    // Both arrows point along the direction of travel — cars always run entry
-    // to exit — rather than facing each other across the lane.
-    // Push the captions to the far side of the track from the lane, so they sit
-    // in open space rather than under the bays. The lane's own offset from the
-    // straight gives that direction.
-    const laneSideY = Math.sign(frame.originY - layout.trackY) || -1;
+    // laid side by side, so anchoring them to it makes them collide. Both arrows
+    // point along the direction of travel — cars always run entry to exit —
+    // rather than facing each other across the lane. They go on the opposite
+    // side from the lane, so they clear the bays.
     const captionShift = -laneSideY * 15 * ds;
     ctx.font = `600 7px ${FONT}`;
     ctx.fillStyle = palette.textMuted;
