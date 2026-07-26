@@ -165,12 +165,17 @@ export function createTrackRenderer(
     const flip = nearbyTrack(baseX, baseY) > nearbyTrack(-baseX, -baseY);
     const normalX = flip ? -baseX : baseX;
     const normalY = flip ? -baseY : baseY;
-    const laneY = midY + normalY * 27 * ds;
-    const laneCenterX = midX + normalX * 27 * ds;
+    // Clear the track by the lane box's own half-height plus the asphalt, so the
+    // box sits fully beside the straight. Offsetting by a flat amount leaves a
+    // steep straight — Las Vegas climbs at 113° — with the box straddling it.
+    const laneOffset = 27 * ds + (38 * ds) / 2;
+    const laneY = midY + normalY * laneOffset;
+    const laneCenterX = midX + normalX * laneOffset;
     // Inset the lane from both anchors so the guide curves have room to bend
-    // away from the circuit and back. Short pit straights would otherwise
-    // invert the rect, so clamp to a minimum usable width.
-    const halfWidth = Math.max(48 * ds, spanLength / 2 - 64 * ds);
+    // away from the circuit and back. A short pit straight would leave no lane
+    // at all, so the width floor is generous enough to hold a full grid of bays
+    // — Las Vegas's start/finish diagonal is barely longer than the lane needs.
+    const halfWidth = Math.max(72 * ds, spanLength / 2 - 64 * ds);
     // The lane is built as an axis-aligned rect in its own rotated frame, whose
     // x axis runs along the pit straight. For a horizontal straight the frame is
     // the identity and the geometry is unchanged; for a diagonal one everything
@@ -837,6 +842,9 @@ export function createTrackRenderer(
     // furthest corner, not its centre — on a rotated box the two differ by the
     // half-length of the lane projected onto y.
     const laneSideY = Math.sign(frame.originY - layout.trackY) || -1;
+    // Whether travel runs left-to-right on screen. Lane text is rotated onto the
+    // straight, so a leftward straight gets a half-turn to stay right side up.
+    const runsRight = layout.pitExit.x >= layout.pitEntry.x;
     const boxReachY = Math.abs(halfWidth * Math.sin(frame.angle))
       + Math.abs(halfHeight * Math.cos(frame.angle));
     ctx.textAlign = 'center';
@@ -856,27 +864,24 @@ export function createTrackRenderer(
     // rather than facing each other across the lane. They go on the opposite
     // side from the lane, so they clear the bays.
     const captionShift = -laneSideY * 15 * ds;
-    // Which way the straight runs on screen. Las Vegas runs right-to-left, so
-    // the arrows and the side each caption sits on both have to follow travel
-    // rather than assume the entry is always the left-hand end.
-    const runsRight = layout.pitExit.x >= layout.pitEntry.x;
-    const arrow = runsRight ? '›››' : '‹‹‹';
+    // Captions are rotated onto the straight so the arrows read along the
+    // direction of travel whatever angle it runs at. The rotation is flipped
+    // when the straight runs leftward, so the text never ends up upside-down.
+    const captionAngle = frame.angle + (runsRight ? 0 : Math.PI);
+    const drawCaption = (text: string, at: CircuitPoint, alignOut: 'left' | 'right'): void => {
+      ctx.save();
+      ctx.translate(at.x, at.y + captionShift);
+      ctx.rotate(captionAngle);
+      ctx.textAlign = alignOut;
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, alignOut === 'right' ? -6 * ds : 6 * ds, 0);
+      ctx.restore();
+    };
     ctx.font = `600 7px ${FONT}`;
     ctx.fillStyle = palette.textMuted;
-    ctx.textBaseline = 'middle';
     // Each caption sits outboard of its own junction, pointing along the lap.
-    ctx.textAlign = runsRight ? 'right' : 'left';
-    ctx.fillText(
-      runsRight ? `PIT ENTRY  ${arrow}` : `${arrow}  PIT ENTRY`,
-      layout.pitEntry.x + (runsRight ? -6 : 6) * ds,
-      layout.pitEntry.y + captionShift,
-    );
-    ctx.textAlign = runsRight ? 'left' : 'right';
-    ctx.fillText(
-      runsRight ? `${arrow}  PIT EXIT` : `PIT EXIT  ${arrow}`,
-      layout.pitExit.x + (runsRight ? 6 : -6) * ds,
-      layout.pitExit.y + captionShift,
-    );
+    drawCaption('PIT ENTRY  ›››', layout.pitEntry, 'right');
+    drawCaption('›››  PIT EXIT', layout.pitExit, 'left');
 
     ctx.save();
     ctx.translate(frame.originX, frame.originY);
@@ -908,11 +913,17 @@ export function createTrackRenderer(
       );
       ctx.fill();
 
+      // Bay number turns with the lane, but flipped a half turn when the lane
+      // runs leftward so the digits never read upside-down.
+      ctx.save();
+      ctx.translate(localX, centerY + 13 * ds);
+      if (!runsRight) ctx.rotate(Math.PI);
       ctx.fillStyle = palette.textMuted;
       ctx.font = `700 5px ${FONT}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(String(index + 1).padStart(2, '0'), localX, centerY + 13 * ds);
+      ctx.fillText(String(index + 1).padStart(2, '0'), 0, 0);
+      ctx.restore();
 
       pitBoxes.set(team.id, toScene(localX, centerY));
     });
