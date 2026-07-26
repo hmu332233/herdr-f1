@@ -2,9 +2,6 @@ import type { SyncMessage } from '../shared/protocol.js';
 import type { PodiumResult } from '../shared/presentation.js';
 import { palette, teamColor } from './palette.js';
 
-/** Fallback race distance, used until a circuit is selected. */
-const DEFAULT_TOTAL_LAPS = 58;
-
 /** Header bars, connection badge, connection overlays, and the podium panel. */
 export function createChrome() {
   const lap = document.getElementById('lap-text')!;
@@ -15,19 +12,10 @@ export function createChrome() {
   const overlay = document.getElementById('overlay')!;
   const standingsEmpty = document.getElementById('standings-empty')!;
 
-  /** Race distance shown in the header. Set from the selected circuit, since
-   *  the published distance differs per venue. */
-  let totalLaps = DEFAULT_TOTAL_LAPS;
-  let latest: SyncMessage | null = null;
-
-  function setTotalLaps(laps: number): void {
-    totalLaps = laps;
-    if (latest) render(latest);
-  }
-
   function render(sync: SyncMessage): void {
-    latest = sync;
-    lap.textContent = `LAP ${Math.min(sync.headerLap, totalLaps)} / ${totalLaps}`;
+    // Race distance comes from the server, which owns the race: it is told the
+    // selected circuit's distance and caps headerLap against it.
+    lap.textContent = `LAP ${sync.headerLap} / ${sync.totalLaps}`;
     phase.textContent =
       sync.phase === 'awaitingGrid' ? 'FORMATION' : sync.phase === 'live' ? 'RACE LIVE' : 'PODIUM';
     grandPrix.textContent = `GRAND PRIX ${sync.grandPrix}`;
@@ -77,7 +65,7 @@ export function createChrome() {
     overlay.replaceChildren(card);
   }
 
-  return { render, setTotalLaps };
+  return { render };
 }
 
 function connectionBadge(sync: SyncMessage, entryCount: number): { text: string; color: string } {

@@ -49,6 +49,10 @@ export function createRaceSession(
   wallClock: () => Date = () => new Date(),
 ) {
   let lastTick: number | null = null;
+  /** Race distance for the circuit currently being raced. Session state rather
+   *  than a constant, because each venue has its own published distance and the
+   *  dashboard can switch circuits mid-session. */
+  let totalLaps: number = RaceRules.totalLaps;
   /** Accepted live seconds since the current Grand Prix started. */
   let raceTime = 0;
   let podiumElapsed = 0;
@@ -130,7 +134,7 @@ export function createRaceSession(
   }
 
   function scoreLive(elapsed: number): void {
-    // The first individual to reach 58 ends the race, so everyone only
+    // The first individual to reach the finish ends the race, so everyone only
     // advances up to the earliest finish instant within this step.
     let earliestFinish = elapsed;
     let finisher: string | null = null;
@@ -139,7 +143,7 @@ export function createRaceSession(
       const official = { value: entry.official };
       const pace = { ...entry.pace };
       const unused = walk(official, pace, entry.terminalID, elapsed);
-      if (official.value >= RaceRules.totalLaps) {
+      if (official.value >= totalLaps) {
         const finishTime = elapsed - unused;
         if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
           earliestFinish = finishTime;
@@ -173,7 +177,7 @@ export function createRaceSession(
   }
 
   /** Advances `official.value` by up to `budget` seconds, resampling pace at
-   *  each official lap boundary and stopping exactly at the 58-lap finish.
+   *  each official lap boundary and stopping exactly at the finish.
    *  Returns the unused part of the budget (non-zero only at the finish). */
   function walk(
     official: { value: number },
@@ -181,10 +185,10 @@ export function createRaceSession(
     terminalID: string,
     budget: number,
   ): number {
-    const finish = RaceRules.totalLaps;
+    const finish = totalLaps;
     let remaining = budget;
     while (remaining > 1e-12 && official.value < finish) {
-      const lap = Math.min(Math.floor(official.value), RaceRules.totalLaps - 1);
+      const lap = Math.min(Math.floor(official.value), totalLaps - 1);
       if (pace.lap !== lap) {
         pace.multiplier = clampPace(paceSource(grandPrix, terminalID, lap));
         pace.lap = lap;
@@ -193,7 +197,7 @@ export function createRaceSession(
       const boundary = Math.min(lap + 1, finish);
       const timeToBoundary = (boundary - official.value) / speed;
       // The epsilon snaps float-accumulated distance onto exact lap
-      // boundaries so lap labels and the 58-lap finish stay crisp.
+      // boundaries so lap labels and the finish stay crisp.
       if (timeToBoundary <= remaining + 1e-9) {
         official.value = boundary;
         remaining = Math.max(0, remaining - timeToBoundary);
@@ -292,7 +296,7 @@ export function createRaceSession(
    *  oldest once the window is full. Callers must only fire this on a real
    *  transition — never on a snapshot that merely restates known state. */
   function emitRadio(entry: Entry, kind: RadioKind): void {
-    const lap = lapOf(entry);
+    const lap = lapOf(entry, totalLaps);
     const id = nextRadioID++;
     radio.push({
       id,
@@ -488,6 +492,7 @@ export function createRaceSession(
       phase: phase,
       grandPrix: grandPrix,
       headerLap: headerLap(),
+      totalLaps,
       teams,
       podium: frozenPodium,
       connection: connection,
@@ -501,7 +506,7 @@ export function createRaceSession(
     for (const entry of entries.values()) {
       if (!entry.isQueuedNextGrid) leader = Math.max(leader, entry.official);
     }
-    return Math.min(RaceRules.totalLaps, Math.floor(leader) + 1);
+    return Math.min(totalLaps, Math.floor(leader) + 1);
   }
 
   function rankedTeams(): TeamStanding[] {
@@ -555,7 +560,7 @@ export function createRaceSession(
   }
 
   function present(entry: Entry): EntryPresentation {
-    const lap = lapOf(entry);
+    const lap = lapOf(entry, totalLaps);
     const progress = entry.display - Math.floor(entry.display);
 
     let placement: EntryPlacement;
@@ -634,7 +639,27 @@ export function createRaceSession(
     return { kind: 'none' };
   }
 
-  return { apply, applyConnection, applySnapshot, advance, presentation };
+  /** Sets the race distance for the selected circuit.
+   *
+   *  Distance already covered is kept: cars stay where they are and the finish
+   *  moves. Shortening it below what the leader has already run would leave the
+   *  race unfinishable by the normal path, so that case finishes the Grand Prix
+   *  immediately — the same outcome as a car crossing the line. */
+  function setTotalLaps(laps: number, now: number): void {
+    const next = Math.max(1, Math.floor(laps));
+    if (next === totalLaps) return;
+    advance(now);
+    totalLaps = next;
+    if (phase !== 'live') return;
+    for (const entry of entries.values()) {
+      if (!entry.isQueuedNextGrid && entry.official >= totalLaps) {
+        finishGrandPrix();
+        return;
+      }
+    }
+  }
+
+  return { apply, applyConnection, applySnapshot, advance, presentation, setTotalLaps };
 }
 
 export type RaceSession = ReturnType<typeof createRaceSession>;
@@ -653,8 +678,8 @@ function clockText(now: Date): string {
 
 /** One-based lap from official distance, capped at the finish. Shared so the
  *  lap a radio line quotes always matches the standings. */
-function lapOf(entry: Entry): number {
-  return Math.min(RaceRules.totalLaps, Math.floor(entry.official) + 1);
+function lapOf(entry: Entry, totalLaps: number): number {
+  return Math.min(totalLaps, Math.floor(entry.official) + 1);
 }
 
 function gapText(gap: number): string {

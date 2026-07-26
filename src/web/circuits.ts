@@ -320,7 +320,7 @@ const CATALUNYA: CircuitDefinition = {
 };
 
 export const CIRCUITS: readonly CircuitDefinition[] = [
-  HERDR, KOREA, SUZUKA, LAS_VEGAS, CATALUNYA,
+  HERDR, KOREA, SUZUKA, CATALUNYA, LAS_VEGAS,
 ];
 
 export const DEFAULT_CIRCUIT_ID = HERDR.id;

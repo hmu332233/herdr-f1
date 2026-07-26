@@ -28,6 +28,7 @@ export async function startDashboard(options: {
     webRoot,
     broadcaster,
     onFocus: terminalID => { client?.focus(terminalID).catch(() => {}); },
+    onCircuit: totalLaps => { session.setTotalLaps(totalLaps, monotonicSeconds()); },
   });
   broadcaster.start();
   return {

@@ -137,3 +137,50 @@ describe('grid lifecycle', () => {
     expect(entryById(session.presentation(), 't2').isFocused).toBe(false);
   });
 });
+
+describe('race distance', () => {
+  it('reports the default distance until told otherwise', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    expect(session.presentation().totalLaps).toBe(RaceRules.totalLaps);
+  });
+
+  it('publishes a new distance and caps headerLap against it', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 40 * RaceRules.baseLapDuration);
+    session.setTotalLaps(50, now);
+    const shown = session.presentation();
+    expect(shown.totalLaps).toBe(50);
+    expect(shown.headerLap).toBeLessThanOrEqual(50);
+  });
+
+  it('keeps distance already covered when the finish moves', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 20 * RaceRules.baseLapDuration);
+    const before = entryById(session.presentation(), 't1').officialDistance;
+    session.setTotalLaps(66, now);
+    expect(entryById(session.presentation(), 't1').officialDistance).toBeCloseTo(before, 6);
+    expect(session.presentation().phase).toBe('live');
+  });
+
+  // Shortening the race below what the leader has run leaves no lap boundary
+  // left to cross, so the Grand Prix has to end there rather than hang.
+  it('finishes at once when shortened below the leader distance', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 30 * RaceRules.baseLapDuration);
+    expect(session.presentation().phase).toBe('live');
+    session.setTotalLaps(10, now);
+    expect(session.presentation().phase).toBe('podium');
+  });
+
+  it('ignores a distance it is already on', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 30 * RaceRules.baseLapDuration);
+    session.setTotalLaps(RaceRules.totalLaps, now);
+    expect(session.presentation().phase).toBe('live');
+  });
+});

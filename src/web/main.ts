@@ -13,6 +13,15 @@ const sendFocus = (terminalID: string): void => {
   }
 };
 
+/** Tells the server how long the selected circuit's race is. The drawing is a
+ *  per-browser choice, but the distance it implies is race state — the server
+ *  owns the finish, so it has to be told. */
+const sendCircuitLaps = (circuitID: string): void => {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'circuit', totalLaps: circuitByID(circuitID).laps }));
+  }
+};
+
 // Circuit choice is a per-browser view preference, not race state: the server
 // owns standings and scoring, so two viewers may watch the same race on
 // different layouts without disagreeing about anything that counts.
@@ -54,11 +63,9 @@ circuitSelect.replaceChildren(...CIRCUITS.map(circuit => {
   return option;
 }));
 circuitSelect.value = track.currentCircuitID();
-chrome.setTotalLaps(circuitByID(circuitSelect.value).laps);
 circuitSelect.addEventListener('change', () => {
   track.setCircuit(circuitSelect.value);
-  // Each venue has its own published race distance.
-  chrome.setTotalLaps(circuitByID(circuitSelect.value).laps);
+  sendCircuitLaps(circuitSelect.value);
   try {
     localStorage.setItem(CIRCUIT_STORAGE_KEY, circuitSelect.value);
   } catch {
@@ -76,6 +83,10 @@ requestAnimationFrame(frame);
 
 function connect(): void {
   socket = new WebSocket(`ws://${location.host}/ws`);
+  // The server starts on a default distance and cannot know the viewer's stored
+  // circuit, so announce it as soon as there is a socket to announce it on —
+  // including after a reconnect, which may be a restarted server.
+  socket.onopen = () => sendCircuitLaps(circuitSelect.value);
   socket.onmessage = event => {
     sync = JSON.parse(event.data as string) as SyncMessage;
     chrome.render(sync);
