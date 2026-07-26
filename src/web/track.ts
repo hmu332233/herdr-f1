@@ -863,25 +863,31 @@ export function createTrackRenderer(
     // point along the direction of travel — cars always run entry to exit —
     // rather than facing each other across the lane. They go on the opposite
     // side from the lane, so they clear the bays.
-    const captionShift = -laneSideY * 15 * ds;
-    // Captions are rotated onto the straight so the arrows read along the
-    // direction of travel whatever angle it runs at. The rotation is flipped
-    // when the straight runs leftward, so the text never ends up upside-down.
-    const captionAngle = frame.angle + (runsRight ? 0 : Math.PI);
-    const drawCaption = (text: string, at: CircuitPoint, alignOut: 'left' | 'right'): void => {
-      ctx.save();
-      ctx.translate(at.x, at.y + captionShift);
-      ctx.rotate(captionAngle);
-      ctx.textAlign = alignOut;
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, alignOut === 'right' ? -6 * ds : 6 * ds, 0);
-      ctx.restore();
-    };
-    ctx.font = `600 7px ${FONT}`;
-    ctx.fillStyle = palette.textMuted;
-    // Each caption sits outboard of its own junction, pointing along the lap.
-    drawCaption('PIT ENTRY  ›››', layout.pitEntry, 'right');
-    drawCaption('›››  PIT EXIT', layout.pitExit, 'left');
+    //
+    // Circuits whose pit straight is short and steep can opt out: there the
+    // junctions sit close together against a corner, and no placement reads
+    // cleanly. The lane itself, its bays, and PIT LANE still identify it.
+    if (!layout.circuit.hidePitCaptions) {
+      const captionShift = -laneSideY * 15 * ds;
+      // Captions are rotated onto the straight so the arrows read along the
+      // direction of travel whatever angle it runs at. The rotation is flipped
+      // when the straight runs leftward, so the text never ends up upside-down.
+      const captionAngle = frame.angle + (runsRight ? 0 : Math.PI);
+      const drawCaption = (text: string, at: CircuitPoint, alignOut: 'left' | 'right'): void => {
+        ctx.save();
+        ctx.translate(at.x, at.y + captionShift);
+        ctx.rotate(captionAngle);
+        ctx.textAlign = alignOut;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, alignOut === 'right' ? -6 * ds : 6 * ds, 0);
+        ctx.restore();
+      };
+      ctx.font = `600 7px ${FONT}`;
+      ctx.fillStyle = palette.textMuted;
+      // Each caption sits outboard of its own junction, pointing along the lap.
+      drawCaption('PIT ENTRY  ›››', layout.pitEntry, 'right');
+      drawCaption('›››  PIT EXIT', layout.pitExit, 'left');
+    }
 
     ctx.save();
     ctx.translate(frame.originX, frame.originY);

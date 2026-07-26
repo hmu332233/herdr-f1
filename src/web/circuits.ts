@@ -40,6 +40,11 @@ export interface CircuitDefinition {
    *  the layout from an authoring mistake, which would otherwise look identical
    *  to a geometry check. */
   crossovers?: number;
+  /** Suppresses the PIT ENTRY / PIT EXIT captions. Set it where the pit
+   *  straight is short and steep enough that the two junctions crowd a corner
+   *  and no placement reads cleanly; the lane, its bays and the PIT LANE title
+   *  still mark it. */
+  hidePitCaptions?: boolean;
   /** Asphalt width in design units (default 22). A layout traced to real
    *  proportions needs a narrower ribbon than the stylized default: where the
    *  real circuit runs two legs side by side, too wide a ribbon merges them
@@ -236,6 +241,10 @@ const LAS_VEGAS: CircuitDefinition = {
   // Scaled from the source: a 2.24-unit stroke against a 907-unit lap.
   trackWidth: 9,
   markerRadius: 9,
+  // The start/finish diagonal is short and climbs at ~113°, so pit entry and
+  // exit land close together against the turn 1 complex. The captions have no
+  // room to read correctly there; the lane and its bays mark the pits instead.
+  hidePitCaptions: true,
   spread: 1,
   spreadAnchor: 0.5,
   // Indices 4→6: the diagonal from turn 17 up to turn 1. Published layouts mark
