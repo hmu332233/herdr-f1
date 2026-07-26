@@ -54,8 +54,11 @@ circuitSelect.replaceChildren(...CIRCUITS.map(circuit => {
   return option;
 }));
 circuitSelect.value = track.currentCircuitID();
+chrome.setTotalLaps(circuitByID(circuitSelect.value).laps);
 circuitSelect.addEventListener('change', () => {
   track.setCircuit(circuitSelect.value);
+  // Each venue has its own published race distance.
+  chrome.setTotalLaps(circuitByID(circuitSelect.value).laps);
   try {
     localStorage.setItem(CIRCUIT_STORAGE_KEY, circuitSelect.value);
   } catch {

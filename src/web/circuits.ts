@@ -40,6 +40,11 @@ export interface CircuitDefinition {
    *  the layout from an authoring mistake, which would otherwise look identical
    *  to a geometry check. */
   crossovers?: number;
+  /** Race distance shown in the header, in laps. The race itself still runs to
+   *  RaceRules.totalLaps — that lives on the server, which knows nothing about
+   *  the viewer's circuit choice — so this is the published distance for the
+   *  venue rather than a change to scoring. */
+  laps: number;
   /** Suppresses the PIT ENTRY / PIT EXIT captions. Set it where the pit
    *  straight is short and steep enough that the two junctions crowd a corner
    *  and no placement reads cleanly; the lane, its bays and the PIT LANE title
@@ -67,6 +72,7 @@ const HERDR: CircuitDefinition = {
   id: 'herdr',
   name: 'HERDR CIRCUIT',
   flag: '🏁',
+  laps: 58,
   points: [
     // Long start/finish straight feeding a decisive right-side climb.
     [0.58, 0.10], [0.72, 0.10], [0.78, 0.16],
@@ -107,6 +113,7 @@ const SUZUKA: CircuitDefinition = {
   id: 'suzuka',
   name: 'SUZUKA',
   flag: '🇯🇵',
+  laps: 53,
   points: [
     // Main straight past the pits, into the opening right-hander.
     [0.622, 0.965], [0.922, 0.957], [0.949, 0.926], [0.965, 0.857],
@@ -163,6 +170,7 @@ const KOREA: CircuitDefinition = {
   id: 'korea',
   name: 'KOREA INTERNATIONAL',
   flag: '🇰🇷',
+  laps: 55,
   points: [
     // Out of the final corner onto the long left-hand section.
     [0.248, 0.694], [0.077, 0.685], [0.043, 0.652], [0.035, 0.606],
@@ -207,6 +215,7 @@ const LAS_VEGAS: CircuitDefinition = {
   id: 'las-vegas',
   name: 'LAS VEGAS STRIP',
   flag: '🇺🇸',
+  laps: 50,
   //  Point order follows the circuit's direction of travel — anticlockwise,
   //  east along the Strip then north up Harmon Avenue — as marked by the
   //  direction arrows in the source drawing. The traced edge ran the other way
@@ -253,7 +262,66 @@ const LAS_VEGAS: CircuitDefinition = {
   pit: { entry: 4, exit: 6 },
 };
 
-export const CIRCUITS: readonly CircuitDefinition[] = [HERDR, KOREA, SUZUKA, LAS_VEGAS];
+/** Circuit de Barcelona-Catalunya (2021 layout), derived from the layout's own
+ *  SVG path data.
+ *
+ *  Direction and start/finish come from the drawing rather than guesswork: the
+ *  source overlays the three timing sectors as separate coloured paths, and they
+ *  chain head-to-tail in increasing order along this path — sector 1 ends where
+ *  sector 2 begins, and sector 3 closes back to the start. So the traced order
+ *  already runs in lap order, and the sector-3/sector-1 boundary marks the
+ *  start/finish line, which falls on the main straight below. */
+const CATALUNYA: CircuitDefinition = {
+  id: 'catalunya',
+  name: 'BARCELONA-CATALUNYA',
+  flag: '🇪🇸',
+  laps: 66,
+  points: [
+    // Main straight, running west past the pits.
+    [0.784, 0.036], [0.180, 0.036],
+    // Turns 1-2-3 and the climb away from them.
+    [0.169, 0.056], [0.161, 0.090], [0.157, 0.226], [0.146, 0.292],
+    [0.133, 0.321], [0.073, 0.406], [0.049, 0.477], [0.036, 0.576],
+    // The long left round the western end.
+    [0.037, 0.682], [0.046, 0.766], [0.064, 0.842], [0.089, 0.900],
+    [0.124, 0.947], [0.159, 0.964], [0.333, 0.958],
+    // Turn 5 and the descent back inward.
+    [0.352, 0.904], [0.357, 0.825], [0.350, 0.742], [0.329, 0.675],
+    [0.312, 0.644], [0.292, 0.630], [0.161, 0.628],
+    // The infield loop.
+    [0.145, 0.592], [0.142, 0.530], [0.145, 0.501], [0.154, 0.473],
+    [0.230, 0.303], [0.255, 0.260], [0.295, 0.225], [0.372, 0.223],
+    [0.385, 0.239], [0.394, 0.277], [0.397, 0.414], [0.408, 0.501],
+    // The long diagonal north-east across the circuit.
+    [0.478, 0.844], [0.492, 0.887], [0.506, 0.908], [0.532, 0.917],
+    [0.556, 0.892],
+    // The long run back south-east.
+    [0.852, 0.297], [0.867, 0.305], [0.878, 0.348], [0.880, 0.409],
+    [0.874, 0.484], [0.865, 0.540], [0.851, 0.584], [0.805, 0.651],
+    // The final sector loop.
+    [0.793, 0.685], [0.784, 0.757], [0.788, 0.836], [0.804, 0.888],
+    [0.826, 0.904], [0.934, 0.782], [0.940, 0.743], [0.935, 0.472],
+    [0.939, 0.457], [0.962, 0.440], [0.965, 0.426], [0.964, 0.212],
+    // Final corner back onto the main straight.
+    [0.954, 0.126], [0.934, 0.065], [0.912, 0.039],
+  ],
+  // The traced centreline's own bounding box: 619 × 182 units.
+  aspect: 3.3971,
+  // Very wide layout: without this the circuit renders as a 511×150 sliver.
+  fill: 0.7,
+  // Scaled from the source: a 5.12-unit stroke against a 2132-unit lap.
+  trackWidth: 12,
+  markerRadius: 9,
+  spread: 1,
+  spreadAnchor: 0.5,
+  // Indices 63→1: the main straight, and the run the sector-3/sector-1 boundary
+  // — the start/finish line — falls on.
+  pit: { entry: 63, exit: 1 },
+};
+
+export const CIRCUITS: readonly CircuitDefinition[] = [
+  HERDR, KOREA, SUZUKA, LAS_VEGAS, CATALUNYA,
+];
 
 export const DEFAULT_CIRCUIT_ID = HERDR.id;
 
