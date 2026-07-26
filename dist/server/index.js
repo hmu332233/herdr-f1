@@ -5266,7 +5266,10 @@ const RaceRules = {
     newEntrantDeficit: 0.15,
     /** How long the transient NEW STINT treatment stays visible (race seconds). */
     newStintDuration: 4.0,
-    paletteSize: 12,
+    /** Number of distinct constructor liveries available. Must match the length
+     *  of palette.teamColors on the client: slots are handed out against this
+     *  count, and teams beyond it fall back to pattern outlines. */
+    paletteSize: 11,
     maximumGridNumber: 99,
     /** Team radio lines retained per Grand Prix; older ones fall off the back. */
     radioHistoryLimit: 40,

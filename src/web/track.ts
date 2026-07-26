@@ -814,14 +814,30 @@ export function createTrackRenderer(
     ctx.fillStyle = palette.textMuted;
     ctx.fillText('PIT LANE', 0, localY - 6 * ds);
 
-    // Entry/exit captions sit at the ends of the lane, below it, so they follow
-    // the straight instead of drifting off to the scene's horizontal.
+    ctx.restore();
+
+    // Entry/exit captions label the points where the lane meets the circuit,
+    // not the ends of the lane box: the box is narrower than the two captions
+    // laid side by side, so anchoring them to it makes them collide. Drawn in
+    // scene space, upright, offset away from the lane so they clear the bays.
+    // Both arrows point along the direction of travel — cars always run entry
+    // to exit — rather than facing each other across the lane.
+    // Push the captions to the far side of the track from the lane, so they sit
+    // in open space rather than under the bays. The lane's own offset from the
+    // straight gives that direction.
+    const laneSideY = Math.sign(frame.originY - layout.trackY) || -1;
+    const captionShift = -laneSideY * 15 * ds;
     ctx.font = `600 7px ${FONT}`;
-    ctx.textBaseline = 'top';
-    ctx.textAlign = 'left';
-    ctx.fillText('PIT ENTRY  ›››', -halfWidth, halfHeight + 6 * ds);
+    ctx.fillStyle = palette.textMuted;
+    ctx.textBaseline = 'middle';
     ctx.textAlign = 'right';
-    ctx.fillText('‹‹‹  PIT EXIT', halfWidth, halfHeight + 6 * ds);
+    ctx.fillText('PIT ENTRY  ›››', layout.pitEntry.x - 6 * ds, layout.pitEntry.y + captionShift);
+    ctx.textAlign = 'left';
+    ctx.fillText('›››  PIT EXIT', layout.pitExit.x + 6 * ds, layout.pitExit.y + captionShift);
+
+    ctx.save();
+    ctx.translate(frame.originX, frame.originY);
+    ctx.rotate(frame.angle);
 
     // One bay per team, sorted by stable team ID.
     pitBoxes = new Map();

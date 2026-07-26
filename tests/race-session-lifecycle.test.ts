@@ -11,17 +11,18 @@ describe('identity', () => {
     expect(entryById(session.presentation(), 't1').carNumber).toBe(expected);
   });
 
-  it('assigns 12 unique palette slots, then pattern tokens', () => {
+  it('fills every palette slot uniquely, then falls back to pattern tokens', () => {
     const session = createRaceSession(() => 1);
-    const teams = Array.from({ length: 14 }, (_, i) =>
+    const overflow = 2;
+    const teams = Array.from({ length: RaceRules.paletteSize + overflow }, (_, i) =>
       team(`ws-${i}`, `project-${i}`, [agent(`t-${i}`, 'working')]));
     goLive(session, snap(...teams));
     const tokens = session.presentation().teams.map(t => t.colorToken);
     const palette = tokens.filter(t => t.kind === 'palette');
     const pattern = tokens.filter(t => t.kind === 'pattern');
-    expect(palette).toHaveLength(12);
-    expect(new Set(palette.map(t => t.slot)).size).toBe(12);
-    expect(pattern).toHaveLength(2);
+    expect(palette).toHaveLength(RaceRules.paletteSize);
+    expect(new Set(palette.map(t => t.slot)).size).toBe(RaceRules.paletteSize);
+    expect(pattern).toHaveLength(overflow);
   });
 
   it('keeps identity stable across snapshots', () => {

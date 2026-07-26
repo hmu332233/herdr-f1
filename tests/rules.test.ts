@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RaceRules, seededPace, stableHash } from '../src/server/rules.js';
+import { palette } from '../src/web/palette.js';
 
 describe('RaceRules', () => {
   it('matches the Swift constants', () => {
@@ -7,8 +8,22 @@ describe('RaceRules', () => {
       totalLaps: 58, baseLapDuration: 18, baseSpeed: 1 / 18,
       paceMin: 0.75, paceMax: 1.25, doneCooldownFactor: 0.25,
       maximumAcceptedStep: 1, podiumDuration: 8, newEntrantDeficit: 0.15,
-      newStintDuration: 4, paletteSize: 12, maximumGridNumber: 99,
+      newStintDuration: 4, paletteSize: 11, maximumGridNumber: 99,
     });
+  });
+
+  // The server hands out colour slots modulo paletteSize while the colours
+  // themselves live on the client. If the two drift, teams silently share a
+  // livery (array longer) or wrap onto one (array shorter).
+  it('paletteSize matches the number of constructor colours', () => {
+    expect(RaceRules.paletteSize).toBe(palette.teamColors.length);
+  });
+
+  it('every constructor colour is a distinct opaque hex', () => {
+    for (const colour of palette.teamColors) {
+      expect(colour).toMatch(/^#[0-9A-F]{6}$/);
+    }
+    expect(new Set(palette.teamColors).size).toBe(palette.teamColors.length);
   });
 });
 
