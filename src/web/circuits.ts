@@ -17,6 +17,10 @@ export interface CircuitDefinition {
   id: string;
   /** Shown in the selector. */
   name: string;
+  /** Flag shown before the name in the selector. A regional-indicator pair for
+   *  a real venue; the chequered flag for the authored circuit, which has no
+   *  country. */
+  flag: string;
   points: ReadonlyArray<readonly [number, number]>;
   /** Width-to-height ratio of the space these points were authored in. The
    *  renderer fits a rect of this shape, so a layout traced from a wide diagram
@@ -57,6 +61,7 @@ export interface CircuitDefinition {
 const HERDR: CircuitDefinition = {
   id: 'herdr',
   name: 'HERDR CIRCUIT',
+  flag: '🏁',
   points: [
     // Long start/finish straight feeding a decisive right-side climb.
     [0.58, 0.10], [0.72, 0.10], [0.78, 0.16],
@@ -96,6 +101,7 @@ const HERDR: CircuitDefinition = {
 const SUZUKA: CircuitDefinition = {
   id: 'suzuka',
   name: 'SUZUKA',
+  flag: '🇯🇵',
   points: [
     // Main straight past the pits, into the opening right-hander.
     [0.622, 0.965], [0.922, 0.957], [0.949, 0.926], [0.965, 0.857],
@@ -142,7 +148,49 @@ const SUZUKA: CircuitDefinition = {
   pit: { entry: 46, exit: 1 },
 };
 
-export const CIRCUITS: readonly CircuitDefinition[] = [HERDR, SUZUKA];
+/** Korea International Circuit, derived from the layout's own SVG path data.
+ *
+ *  Only the racing line is carried over. The source drawing also contains two
+ *  pale-grey chords — one cutting from turn 12 across to turn 3, another
+ *  clipping turn 4 to turn 6 — which are alternative configurations rather than
+ *  part of the lap; they are separate paths in the source and are left out. */
+const KOREA: CircuitDefinition = {
+  id: 'korea',
+  name: 'KOREA',
+  flag: '🇰🇷',
+  points: [
+    // Out of the final corner onto the long left-hand section.
+    [0.248, 0.694], [0.077, 0.685], [0.043, 0.652], [0.035, 0.606],
+    [0.039, 0.582], [0.051, 0.561], [0.114, 0.549], [0.129, 0.531],
+    // Climbing through the technical infield.
+    [0.132, 0.494], [0.118, 0.396], [0.124, 0.362], [0.237, 0.292],
+    [0.264, 0.267], [0.265, 0.237], [0.252, 0.180], [0.256, 0.159],
+    [0.302, 0.152], [0.330, 0.156], [0.361, 0.219], [0.387, 0.253],
+    [0.412, 0.270], [0.445, 0.272], [0.476, 0.261],
+    // The long pit straight along the top, and the corner off the end of it.
+    [0.518, 0.221], [0.948, 0.036], [0.958, 0.039], [0.965, 0.104],
+    [0.961, 0.130],
+    // The diagonal back across the circuit to the bottom straight.
+    [0.349, 0.779], [0.357, 0.790], [0.859, 0.824], [0.865, 0.839],
+    [0.857, 0.854], [0.796, 0.866], [0.770, 0.882], [0.792, 0.940],
+    // The closing sequence back round to the start.
+    [0.786, 0.958], [0.743, 0.965], [0.647, 0.955], [0.581, 0.935],
+    [0.542, 0.907], [0.517, 0.899], [0.484, 0.905], [0.397, 0.955],
+    [0.358, 0.948], [0.272, 0.887], [0.225, 0.840], [0.229, 0.798],
+    [0.253, 0.718],
+  ],
+  // The racing line's own bounding box: 516.2 × 460.6 units.
+  aspect: 1.1208,
+  // Scaled from the source: a 7-unit ribbon against a 2226-unit lap.
+  trackWidth: 8,
+  markerRadius: 9,
+  spread: 1,
+  spreadAnchor: 0.5,
+  // Indices 23→25: the long straight the source's pit path runs beside.
+  pit: { entry: 23, exit: 25 },
+};
+
+export const CIRCUITS: readonly CircuitDefinition[] = [HERDR, SUZUKA, KOREA];
 
 export const DEFAULT_CIRCUIT_ID = HERDR.id;
 

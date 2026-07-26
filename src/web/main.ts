@@ -50,7 +50,7 @@ const circuitSelect = document.getElementById('circuit-select') as HTMLSelectEle
 circuitSelect.replaceChildren(...CIRCUITS.map(circuit => {
   const option = document.createElement('option');
   option.value = circuit.id;
-  option.textContent = circuit.name;
+  option.textContent = `${circuit.flag}  ${circuit.name}`;
   return option;
 }));
 circuitSelect.value = track.currentCircuitID();

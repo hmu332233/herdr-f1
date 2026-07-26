@@ -50,6 +50,10 @@ interface CircuitLayout {
   trackY: number;
   laneY: number;
   pitLaneRect: { x: number; y: number; width: number; height: number };
+  /** Lane-local frame: the pit lane is drawn rotated onto its own straight, so
+   *  a diagonal pit straight still gets a lane running alongside it rather than
+   *  an axis-aligned box lying across the circuit. */
+  laneFrame: { originX: number; originY: number; angle: number };
 }
 
 export function createTrackRenderer(
@@ -135,14 +139,25 @@ export function createTrackRenderer(
     const offset = 46 * ds;
     const baseX = spanY / spanLength;
     const baseY = -spanX / spanLength;
+    // Score a side by how much track sits in the band the lane would occupy.
+    // Probes run the length of the straight, not just its midpoint: a single
+    // probe ties easily on a diagonal straight and then picks a side at random,
+    // which drops the lane on top of the circuit.
     const nearbyTrack = (dirX: number, dirY: number): number => {
-      const probeX = midX + dirX * offset;
-      const probeY = midY + dirY * offset;
-      let count = 0;
-      for (const point of line) {
-        if (Math.hypot(point.x - probeX, point.y - probeY) < offset) count += 1;
+      const probes = 7;
+      let total = 0;
+      for (let step = 0; step < probes; step += 1) {
+        const t = (step + 0.5) / probes;
+        const alongX = pitEntry.x + spanX * t + dirX * offset;
+        const alongY = pitEntry.y + spanY * t + dirY * offset;
+        for (const point of line) {
+          const d = Math.hypot(point.x - alongX, point.y - alongY);
+          // Weight by closeness, so track running right through the band counts
+          // for much more than track merely in the neighbourhood.
+          if (d < offset) total += 1 - d / offset;
+        }
       }
-      return count;
+      return total;
     };
     const flip = nearbyTrack(baseX, baseY) > nearbyTrack(-baseX, -baseY);
     const normalX = flip ? -baseX : baseX;
@@ -152,7 +167,12 @@ export function createTrackRenderer(
     // Inset the lane from both anchors so the guide curves have room to bend
     // away from the circuit and back. Short pit straights would otherwise
     // invert the rect, so clamp to a minimum usable width.
-    const halfWidth = Math.max(48 * ds, Math.abs(spanX) / 2 - 64 * ds);
+    const halfWidth = Math.max(48 * ds, spanLength / 2 - 64 * ds);
+    // The lane is built as an axis-aligned rect in its own rotated frame, whose
+    // x axis runs along the pit straight. For a horizontal straight the frame is
+    // the identity and the geometry is unchanged; for a diagonal one everything
+    // — box, bays, labels, boxes — turns with it.
+    const angle = Math.atan2(spanY, spanX);
     return {
       circuit, line, lengths, pitEntry, pitExit,
       pitEntryProgress: lengths[entryIndex] / lengths[line.length],
@@ -165,6 +185,7 @@ export function createTrackRenderer(
         x: laneCenterX - halfWidth, y: laneY - 45 * ds,
         width: halfWidth * 2, height: 38 * ds,
       },
+      laneFrame: { originX: laneCenterX, originY: laneY, angle },
     };
   }
 
@@ -376,13 +397,19 @@ export function createTrackRenderer(
   }
 
   function pitTarget(teamID: string, pitSlot: number): { x: number; y: number; kind: 'pit' } {
-    const box = pitBoxes.get(teamID) ??
-      {
-        x: layout.pitLaneRect.x + layout.pitLaneRect.width / 2,
-        y: layout.pitLaneRect.y + layout.pitLaneRect.height / 2,
-      };
-    // Cascade downward in css space (the Swift original cascades -y in y-up).
-    return { x: box.x + pitSlot * 12, y: box.y + pitSlot * 10, kind: 'pit' };
+    const box = pitBoxes.get(teamID) ?? { x: layout.laneFrame.originX, y: layout.laneFrame.originY };
+    // Stacked cars cascade along the lane and out of it, in the lane's own frame
+    // so the queue follows a rotated pit straight instead of always going
+    // down-right in scene space.
+    const cos = Math.cos(layout.laneFrame.angle);
+    const sin = Math.sin(layout.laneFrame.angle);
+    const alongLane = pitSlot * 12;
+    const acrossLane = pitSlot * 10;
+    return {
+      x: box.x + alongLane * cos - acrossLane * sin,
+      y: box.y + alongLane * sin + acrossLane * cos,
+      kind: 'pit',
+    };
   }
 
   function updateMarker(
@@ -460,23 +487,26 @@ export function createTrackRenderer(
     return true;
   }
 
-  /** Pit box → pit exit. The control point pulls the curve along the lane
-   *  before it rejoins, so cars sweep out rather than cutting diagonally.
-   *  Signed by the lane's own direction, so mirrored layouts still bend the
-   *  right way. */
+  /** Pit box → pit exit. The control point sits back along the lane's own
+   *  direction, so the car sweeps out parallel to the pit straight before
+   *  rejoining rather than cutting straight across it. */
   function exitRoute(from: CircuitPoint): CircuitPoint[] {
-    const reach = 44 * ds * Math.sign(layout.pitExit.x - layout.pitEntry.x || 1);
-    return [from, ...sampleQuadratic(
-      from, { x: layout.pitExit.x - reach, y: from.y }, layout.pitExit,
-    )];
+    const reach = 44 * ds;
+    const control = {
+      x: layout.pitExit.x - Math.cos(layout.laneFrame.angle) * reach,
+      y: layout.pitExit.y - Math.sin(layout.laneFrame.angle) * reach,
+    };
+    return [from, ...sampleQuadratic(from, control, layout.pitExit)];
   }
 
   /** Pit entry → pit box, mirroring exitRoute. */
   function entryRoute(target: CircuitPoint): CircuitPoint[] {
-    const reach = 44 * ds * Math.sign(layout.pitExit.x - layout.pitEntry.x || 1);
-    return [layout.pitEntry, ...sampleQuadratic(
-      layout.pitEntry, { x: layout.pitEntry.x + reach, y: target.y }, target,
-    )];
+    const reach = 44 * ds;
+    const control = {
+      x: layout.pitEntry.x + Math.cos(layout.laneFrame.angle) * reach,
+      y: layout.pitEntry.y + Math.sin(layout.laneFrame.angle) * reach,
+    };
+    return [layout.pitEntry, ...sampleQuadratic(layout.pitEntry, control, target)];
   }
 
   // MARK: - Marker drawing
@@ -694,22 +724,35 @@ export function createTrackRenderer(
     staticCanvas = off;
   }
 
+  /** Asphalt of the pit lane itself: a curve off the circuit at pit entry, a
+   *  straight run past the bays, and a curve back on at pit exit. The straight
+   *  section is expressed in the lane's own rotated frame so it stays parallel
+   *  to the pit straight whatever angle that runs at. */
   function pitGuidePath(): Path2D {
     const ds = designScale;
     const reach = 46 * ds;
-    const { pitEntry, pitExit, entryTangent, exitTangent, laneY, pitLaneRect } = layout;
-    const laneMinX = pitLaneRect.x;
-    const laneMaxX = pitLaneRect.x + pitLaneRect.width;
+    const { pitEntry, pitExit, entryTangent, exitTangent, pitLaneRect, laneFrame } = layout;
+    const half = pitLaneRect.width / 2;
+    const cos = Math.cos(laneFrame.angle);
+    const sin = Math.sin(laneFrame.angle);
+    const local = (lx: number, ly: number): [number, number] => [
+      laneFrame.originX + lx * cos - ly * sin,
+      laneFrame.originY + lx * sin + ly * cos,
+    ];
+    const [startX, startY] = local(-half, 0);
+    const [endX, endY] = local(half, 0);
+    const [leadX, leadY] = local(-half - 40 * ds, 0);
+    const [trailX, trailY] = local(half + 40 * ds, 0);
     const path = new Path2D();
     path.moveTo(pitEntry.x, pitEntry.y);
     path.bezierCurveTo(
       pitEntry.x + entryTangent.dx * reach, pitEntry.y + entryTangent.dy * reach,
-      laneMinX - 40 * ds, laneY,
-      laneMinX, laneY,
+      leadX, leadY,
+      startX, startY,
     );
-    path.lineTo(laneMaxX, laneY);
+    path.lineTo(endX, endY);
     path.bezierCurveTo(
-      laneMaxX + 40 * ds, laneY,
+      trailX, trailY,
       pitExit.x - exitTangent.dx * reach, pitExit.y - exitTangent.dy * reach,
       pitExit.x, pitExit.y,
     );
@@ -740,11 +783,28 @@ export function createTrackRenderer(
 
   function drawPitLane(ctx: CanvasRenderingContext2D, sync: SyncMessage, ds: number): void {
     const rect = layout.pitLaneRect;
+    const frame = layout.laneFrame;
+    // Draw the lane in its own frame, rotated onto the pit straight. Lane-local
+    // coordinates are centred on the box, so a horizontal straight (angle 0)
+    // reproduces the original axis-aligned layout exactly.
+    const halfWidth = rect.width / 2;
+    const halfHeight = rect.height / 2;
+    const localY = -halfHeight;
+    // Maps a lane-local point back to scene space, for the pit-box positions the
+    // marker code needs.
+    const toScene = (lx: number, ly: number): CircuitPoint => ({
+      x: frame.originX + lx * Math.cos(frame.angle) - ly * Math.sin(frame.angle),
+      y: frame.originY + lx * Math.sin(frame.angle) + ly * Math.cos(frame.angle),
+    });
+
+    ctx.save();
+    ctx.translate(frame.originX, frame.originY);
+    ctx.rotate(frame.angle);
 
     ctx.fillStyle = hexAlpha(palette.card, 0.72);
     ctx.strokeStyle = 'rgba(255,255,255,0.24)';
     ctx.lineWidth = 1;
-    roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, 2 * ds);
+    roundedRect(ctx, -halfWidth, localY, rect.width, rect.height, 2 * ds);
     ctx.fill();
     ctx.stroke();
 
@@ -752,14 +812,16 @@ export function createTrackRenderer(
     ctx.textBaseline = 'bottom';
     ctx.font = `700 8px ${FONT}`;
     ctx.fillStyle = palette.textMuted;
-    ctx.fillText('PIT LANE', rect.x + rect.width / 2, rect.y - 6 * ds);
+    ctx.fillText('PIT LANE', 0, localY - 6 * ds);
 
+    // Entry/exit captions sit at the ends of the lane, below it, so they follow
+    // the straight instead of drifting off to the scene's horizontal.
     ctx.font = `600 7px ${FONT}`;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    ctx.fillText('PIT ENTRY  ›››', layout.pitEntry.x + 10 * ds, layout.trackY + 16 * ds);
+    ctx.fillText('PIT ENTRY  ›››', -halfWidth, halfHeight + 6 * ds);
     ctx.textAlign = 'right';
-    ctx.fillText('‹‹‹  PIT EXIT', layout.pitExit.x - 10 * ds, layout.trackY + 16 * ds);
+    ctx.fillText('‹‹‹  PIT EXIT', halfWidth, halfHeight + 6 * ds);
 
     // One bay per team, sorted by stable team ID.
     pitBoxes = new Map();
@@ -768,31 +830,34 @@ export function createTrackRenderer(
     const usable = rect.width - inset * 2;
     teams.forEach((team, index) => {
       const fraction = (index + 0.5) / Math.max(teams.length, 1);
-      const x = rect.x + inset + fraction * usable;
-      const midY = rect.y + rect.height / 2;
-      const center = { x, y: midY - 2 * ds };
+      const localX = -halfWidth + inset + fraction * usable;
+      const centerY = -2 * ds;
       const slotWidth = usable / Math.max(teams.length, 1);
       const bayWidth = Math.max(14 * ds, slotWidth - 4 * ds);
 
       ctx.fillStyle = hexAlpha(palette.canvas, 0.78);
       ctx.strokeStyle = 'rgba(255,255,255,0.30)';
       ctx.lineWidth = 1;
-      roundedRect(ctx, center.x - bayWidth / 2, center.y - 15 * ds, bayWidth, 30 * ds, 3 * ds);
+      roundedRect(ctx, localX - bayWidth / 2, centerY - 15 * ds, bayWidth, 30 * ds, 3 * ds);
       ctx.fill();
       ctx.stroke();
 
       ctx.fillStyle = teamColor(team.colorToken);
-      roundedRect(ctx, center.x - (bayWidth - 4 * ds) / 2, center.y - 12 * ds - 1.5 * ds, bayWidth - 4 * ds, 3 * ds, 1);
+      roundedRect(
+        ctx, localX - (bayWidth - 4 * ds) / 2, centerY - 12 * ds - 1.5 * ds,
+        bayWidth - 4 * ds, 3 * ds, 1,
+      );
       ctx.fill();
 
       ctx.fillStyle = palette.textMuted;
       ctx.font = `700 5px ${FONT}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(String(index + 1).padStart(2, '0'), center.x, center.y + 13 * ds);
+      ctx.fillText(String(index + 1).padStart(2, '0'), localX, centerY + 13 * ds);
 
-      pitBoxes.set(team.id, center);
+      pitBoxes.set(team.id, toScene(localX, centerY));
     });
+    ctx.restore();
   }
 
   return { setSync, resize, frame, setCircuit, currentCircuitID };

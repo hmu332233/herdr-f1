@@ -128,7 +128,10 @@ body {
   font-family: inherit;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 1.5px;
+  /* No letter-spacing: a flag is two regional-indicator codepoints that only
+     combine while adjacent, and spacing them apart splits the pair into
+     letters. The names stay legible without it at this size. */
+  letter-spacing: 0;
   cursor: pointer;
   max-width: 190px;
   text-overflow: ellipsis;
