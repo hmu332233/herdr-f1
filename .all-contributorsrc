@@ -1,0 +1,41 @@
+{
+  "projectName": "herdr-f1",
+  "projectOwner": "hmu332233",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": [
+    "README.md"
+  ],
+  "imageSize": 100,
+  "commit": false,
+  "contributorsPerLine": 7,
+  "contributorsSortAlphabetically": false,
+  "linkToUsage": false,
+  "skipCi": true,
+  "contributors": [
+    {
+      "login": "hmu332233",
+      "name": "Minung Han",
+      "avatar_url": "https://avatars.githubusercontent.com/hmu332233?v=4",
+      "profile": "https://github.com/hmu332233",
+      "contributions": [
+        "code",
+        "doc",
+        "design",
+        "test",
+        "maintenance"
+      ]
+    },
+    {
+      "login": "DevooKim",
+      "name": "Kim HyunWoo",
+      "avatar_url": "https://avatars.githubusercontent.com/DevooKim?v=4",
+      "profile": "https://github.com/DevooKim",
+      "contributions": [
+        "code",
+        "doc",
+        "test"
+      ]
+    }
+  ]
+}

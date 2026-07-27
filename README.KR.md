@@ -4,6 +4,8 @@
 
 [English](README.md)
 
+[기여자 보기](README.md#contributors-)
+
 Herdr F1은 Herdr에서 실행 중인 에이전트의 상태를 F1 레이스로 시각화합니다.
 
 ![Herdr workspace와 코딩 에이전트를 팀과 차량으로 보여 주는 Herdr F1 대시보드](assets/herdr-f1-dashboard.gif)
@@ -129,6 +131,12 @@ npm run build
 
 ```sh
 herdr plugin link .
+```
+
+기여자를 등록하려면 `.all-contributorsrc`를 수정한 뒤 기여자 표를 다시 생성합니다.
+
+```sh
+npx all-contributors generate
 ```
 
 버그 리포트와 pull request를 환영합니다.
