@@ -8,7 +8,13 @@ describe('npm package', () => {
 
     expect(pkg.name).toBe('herdr-f1');
     expect(pkg.bin).toEqual({ 'herdr-f1': 'bin/herdr-f1.js' });
-    expect(pkg.files).toEqual(['bin', 'dist', 'README.md', 'herdr-plugin.toml']);
+    expect(new Set(pkg.files as string[])).toEqual(new Set([
+      'assets',
+      'bin',
+      'dist',
+      'README.md',
+      'herdr-plugin.toml',
+    ]));
     expect(pkg.dependencies).toBeUndefined();
     expect(pkg.private).toBeUndefined();
 
