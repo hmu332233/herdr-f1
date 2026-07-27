@@ -1,6 +1,9 @@
 import type { SyncMessage } from '../shared/protocol.js';
 import type { EntryPresentation } from '../shared/presentation.js';
-import { centerline, cumulativeLengths, pointAt, tangentAt, type CircuitPoint } from './geometry.js';
+import { circuitByID, DEFAULT_CIRCUIT_ID, type CircuitDefinition } from './circuits.js';
+import {
+  centerline, centerlineIndexOf, cumulativeLengths, pointAt, tangentAt, type CircuitPoint,
+} from './geometry.js';
 import { contrastText, hexAlpha, palette, teamColor } from './palette.js';
 import { extrapolateProgress } from './state.js';
 
@@ -9,6 +12,8 @@ const SCENE_W = 620;
 const SCENE_H = 540;
 const DESIGN_W = 600;
 const DESIGN_H = 540;
+/** Default car-marker radius. Circuits that run stretches of track close
+ *  together override it via CircuitDefinition.markerRadius. */
 const RADIUS = 12.5;
 const PIT_ROUTE_SECONDS = 1.4;
 const PIT_RETURN_SPEED = 1 / 12;
@@ -29,9 +34,28 @@ interface MarkerRuntime {
 
 interface SmokeParticle { x: number; y: number; vx: number; vy: number; bornAt: number; life: number }
 
+/** Everything derived from a circuit definition: the smoothed centerline and
+ *  the pit-lane frame built around its authored pit straight. Swapping
+ *  circuits replaces this wholesale. */
+interface CircuitLayout {
+  circuit: CircuitDefinition;
+  line: CircuitPoint[];
+  lengths: number[];
+  pitEntry: CircuitPoint;
+  pitExit: CircuitPoint;
+  pitEntryProgress: number;
+  pitExitProgress: number;
+  entryTangent: { dx: number; dy: number };
+  exitTangent: { dx: number; dy: number };
+  trackY: number;
+  laneY: number;
+  pitLaneRect: { x: number; y: number; width: number; height: number };
+}
+
 export function createTrackRenderer(
   canvas: HTMLCanvasElement,
   onFocus: (terminalID: string) => void,
+  initialCircuitID: string = DEFAULT_CIRCUIT_ID,
 ) {
   const ctx = canvas.getContext('2d')!;
   let sync: SyncMessage | null = null;
@@ -46,36 +70,111 @@ export function createTrackRenderer(
 
   const designScale = Math.min((SCENE_W - 88) / DESIGN_W, (SCENE_H - 80) / DESIGN_H);
   const ds = designScale;
-  const fittedW = DESIGN_W * ds;
-  const fittedH = DESIGN_H * ds;
-  const circuitRect = {
-    x: (SCENE_W - fittedW) / 2, y: (SCENE_H - fittedH) / 2, width: fittedW, height: fittedH,
-  };
-  const line = centerline(circuitRect);
-  const lengths = cumulativeLengths(line);
+  // Usable area for the circuit, inset from the scene edges to leave room for
+  // pit-lane chrome and marker labels.
+  const frameW = DESIGN_W * ds;
+  const frameH = DESIGN_H * ds;
 
-  // Pit anchors: sampled centerline points on the bottom straight. The
-  // Swift original works y-up; here css-down, so "bottom" is the largest y
-  // and the circuit interior is upward (-y).
-  const bottomLimit = circuitRect.y + circuitRect.height * 0.84;
-  const bottomIndices = line
-    .map((point, index) => ({ point, index }))
-    .filter(({ point }) => point.y >= bottomLimit)
-    .map(({ index }) => index);
-  const fallback = bottomIndices[0] ?? 0;
-  const entryIndex = bottomIndices.reduce((a, b) => (line[a].x <= line[b].x ? a : b), fallback);
-  const exitIndex = bottomIndices.reduce((a, b) => (line[a].x >= line[b].x ? a : b), fallback);
-  const pitEntry = line[entryIndex];
-  const pitExit = line[exitIndex];
-  const pitEntryProgress = lengths[entryIndex] / lengths[line.length];
-  const pitExitProgress = lengths[exitIndex] / lengths[line.length];
-  const entryTangent = tangentAt(entryIndex, line);
-  const exitTangent = tangentAt(exitIndex, line);
-  const trackY = (pitEntry.y + pitExit.y) / 2;
-  const laneY = trackY - 27 * ds;
-  const laneMinX = pitEntry.x + 64 * ds;
-  const laneMaxX = pitExit.x - 64 * ds;
-  const pitLaneRect = { x: laneMinX, y: laneY - 45 * ds, width: laneMaxX - laneMinX, height: 38 * ds };
+  /** Rect a circuit is fitted into.
+   *
+   *  Circuit coordinates are normalized 0..1 on both axes, so the rect's shape
+   *  decides the rendered proportions. A wide layout fitted to its exact source
+   *  aspect leaves the frame's full height unused, which squeezes parallel
+   *  stretches of track until markers on them overlap; letting it fill the
+   *  frame instead stretches the drawing. `fill` chooses between those: 0 keeps
+   *  the source proportions exactly, 1 uses the whole frame, and values between
+   *  trade a little distortion for the vertical room the markers need. */
+  function rectFor(circuit: CircuitDefinition): {
+    x: number; y: number; width: number; height: number;
+  } {
+    const scale = Math.min(frameW / circuit.aspect, frameH);
+    const trueWidth = scale * circuit.aspect;
+    const trueHeight = scale;
+    const fill = circuit.fill ?? 0;
+    const width = trueWidth + (frameW - trueWidth) * fill;
+    const height = trueHeight + (frameH - trueHeight) * fill;
+    return {
+      x: (SCENE_W - width) / 2,
+      y: (SCENE_H - height) / 2,
+      width,
+      height,
+    };
+  }
+
+  /** Resolves a circuit definition into drawable geometry.
+   *
+   *  Pit anchors come from the circuit's authored control-point indices. The
+   *  circuit itself is authored y-up; the canvas is y-down, so the lane sits
+   *  at smaller y (toward the circuit interior) than the pit straight. */
+  function buildLayout(circuit: CircuitDefinition): CircuitLayout {
+    const rect = rectFor(circuit);
+    const line = centerline(rect, circuit);
+    const lengths = cumulativeLengths(line);
+    const count = circuit.points.length;
+    const entryIndex = centerlineIndexOf(circuit.pit.entry, count);
+    const exitIndex = centerlineIndexOf(circuit.pit.exit, count);
+    const pitEntry = line[entryIndex];
+    const pitExit = line[exitIndex];
+    const trackY = (pitEntry.y + pitExit.y) / 2;
+    // The lane box stays axis-aligned (the bays, labels and stacking all work
+    // in x/y), so it is offset along whichever axis the pit straight runs
+    // *across*. For a horizontal straight that is straight up; for a diagonal
+    // one it is up and inward, following the straight's own normal so the lane
+    // sits alongside the track instead of across it.
+    const spanX = pitExit.x - pitEntry.x;
+    const spanY = pitExit.y - pitEntry.y;
+    const spanLength = Math.max(1e-6, Math.hypot(spanX, spanY));
+    const midX = (pitEntry.x + pitExit.x) / 2;
+    const midY = (pitEntry.y + pitExit.y) / 2;
+    // Unit normal to the pit straight, pointed at whichever side has more room.
+    // A pit lane belongs *outside* its straight, so the side to use is the one
+    // with less track on it: sample the centreline either side of the straight
+    // and keep the emptier direction. Aiming at the circuit's centre instead
+    // would tuck the lane inside the loop, on top of the track, whenever the
+    // pit straight runs along an outer edge.
+    const offset = 46 * ds;
+    const baseX = spanY / spanLength;
+    const baseY = -spanX / spanLength;
+    const nearbyTrack = (dirX: number, dirY: number): number => {
+      const probeX = midX + dirX * offset;
+      const probeY = midY + dirY * offset;
+      let count = 0;
+      for (const point of line) {
+        if (Math.hypot(point.x - probeX, point.y - probeY) < offset) count += 1;
+      }
+      return count;
+    };
+    const flip = nearbyTrack(baseX, baseY) > nearbyTrack(-baseX, -baseY);
+    const normalX = flip ? -baseX : baseX;
+    const normalY = flip ? -baseY : baseY;
+    const laneY = midY + normalY * 27 * ds;
+    const laneCenterX = midX + normalX * 27 * ds;
+    // Inset the lane from both anchors so the guide curves have room to bend
+    // away from the circuit and back. Short pit straights would otherwise
+    // invert the rect, so clamp to a minimum usable width.
+    const halfWidth = Math.max(48 * ds, Math.abs(spanX) / 2 - 64 * ds);
+    return {
+      circuit, line, lengths, pitEntry, pitExit,
+      pitEntryProgress: lengths[entryIndex] / lengths[line.length],
+      pitExitProgress: lengths[exitIndex] / lengths[line.length],
+      entryTangent: tangentAt(entryIndex, line),
+      exitTangent: tangentAt(exitIndex, line),
+      trackY,
+      laneY,
+      pitLaneRect: {
+        x: laneCenterX - halfWidth, y: laneY - 45 * ds,
+        width: halfWidth * 2, height: 38 * ds,
+      },
+    };
+  }
+
+  let layout = buildLayout(circuitByID(initialCircuitID));
+
+  /** Car-marker radius for the current circuit. Read through a function rather
+   *  than captured, so a circuit swap takes effect on the next frame. */
+  function radius(): number {
+    return layout.circuit.markerRadius ?? RADIUS;
+  }
 
   let staticCanvas: HTMLCanvasElement | null = null;
   let staticSignature = '';
@@ -96,7 +195,7 @@ export function createTrackRenderer(
     let best: { id: string; d: number } | null = null;
     for (const hit of hits) {
       const d = Math.hypot(hit.x - x, hit.y - y);
-      if (d <= RADIUS + 3.5 && (best === null || d < best.d)) best = { id: hit.id, d };
+      if (d <= radius() + 3.5 && (best === null || d < best.d)) best = { id: hit.id, d };
     }
     if (best) onFocus(best.id);
   });
@@ -107,6 +206,42 @@ export function createTrackRenderer(
     }
     sync = nextSync;
     receivedAt = receivedAtMs;
+  }
+
+  /** Swaps the circuit under a running race.
+   *
+   *  Circuit progress is a normalized fraction, so racing markers keep theirs
+   *  and simply resolve against the new centerline — standings and scoring are
+   *  untouched, since both live on the server. Cars mid-pit-route are snapped
+   *  to the phase their route was heading for: the old route's control points
+   *  no longer describe anything on the new layout. */
+  function setCircuit(circuitID: string): void {
+    const next = circuitByID(circuitID);
+    if (next.id === layout.circuit.id) return;
+    layout = buildLayout(next);
+    staticSignature = '';
+    pitBoxes = new Map();
+    for (const marker of markers.values()) {
+      if (marker.phase === 'exiting') {
+        marker.phase = 'racing';
+        marker.progress = layout.pitExitProgress;
+      } else if (marker.phase === 'entering' || marker.phase === 'parked') {
+        marker.phase = 'parked';
+        marker.progress = null;
+      }
+      marker.transition = null;
+      if (marker.progress !== null) {
+        const point = pointAt(marker.progress, layout.line, layout.lengths);
+        marker.x = point.x;
+        marker.y = point.y;
+      }
+    }
+    // Parked markers are repositioned on the next frame, once drawPitLane has
+    // rebuilt pitBoxes for the new lane.
+  }
+
+  function currentCircuitID(): string {
+    return layout.circuit.id;
   }
 
   function resize(): void {
@@ -227,7 +362,7 @@ export function createTrackRenderer(
   ): { x: number; y: number; kind: 'circuit' | 'pit' } {
     const placement = entry.placement;
     if (placement.kind === 'track' || placement.kind === 'cooldown' || placement.kind === 'incidentTrack') {
-      const point = pointAt(progress, line, lengths);
+      const point = pointAt(progress, layout.line, layout.lengths);
       // A stable per-car lane offset keeps close markers readable even before
       // the bounded bucket separation kicks in.
       const lane = ((entry.carNumber % 3) - 1) * 4 + separation;
@@ -242,7 +377,10 @@ export function createTrackRenderer(
 
   function pitTarget(teamID: string, pitSlot: number): { x: number; y: number; kind: 'pit' } {
     const box = pitBoxes.get(teamID) ??
-      { x: pitLaneRect.x + pitLaneRect.width / 2, y: pitLaneRect.y + pitLaneRect.height / 2 };
+      {
+        x: layout.pitLaneRect.x + layout.pitLaneRect.width / 2,
+        y: layout.pitLaneRect.y + layout.pitLaneRect.height / 2,
+      };
     // Cascade downward in css space (the Swift original cascades -y in y-up).
     return { x: box.x + pitSlot * 12, y: box.y + pitSlot * 10, kind: 'pit' };
   }
@@ -268,22 +406,22 @@ export function createTrackRenderer(
       if (advancePitRoute(marker, nowMs)) {
         if (marker.phase === 'exiting') {
           marker.phase = wantsCircuit ? 'racing' : 'approaching';
-          marker.progress = pitExitProgress;
+          marker.progress = layout.pitExitProgress;
         } else {
           marker.phase = 'parked';
           marker.progress = null;
         }
       }
     } else {
-      if (marker.progress === null) marker.progress = serverProgress ?? pitExitProgress;
+      if (marker.progress === null) marker.progress = serverProgress ?? layout.pitExitProgress;
       if (marker.phase === 'racing' && !wantsCircuit) marker.phase = 'approaching';
       if (marker.phase === 'approaching' && wantsCircuit) marker.phase = 'racing';
 
       if (marker.phase === 'approaching') {
-        const remaining = forwardDistance(marker.progress, pitEntryProgress);
+        const remaining = forwardDistance(marker.progress, layout.pitEntryProgress);
         const step = Math.max(marker.speed, PIT_RETURN_SPEED) * dt;
         if (step >= remaining) {
-          marker.progress = pitEntryProgress;
+          marker.progress = layout.pitEntryProgress;
           startPitRoute(marker, entryRoute(target), 'entering', nowMs);
         } else {
           marker.progress = normalizeProgress(marker.progress + step);
@@ -294,7 +432,7 @@ export function createTrackRenderer(
     }
 
     if (marker.phase === 'racing' || marker.phase === 'approaching') {
-      const point = pointAt(marker.progress ?? 0, line, lengths);
+      const point = pointAt(marker.progress ?? 0, layout.line, layout.lengths);
       marker.x = point.x;
       marker.y = point.y;
     }
@@ -322,15 +460,22 @@ export function createTrackRenderer(
     return true;
   }
 
+  /** Pit box → pit exit. The control point pulls the curve along the lane
+   *  before it rejoins, so cars sweep out rather than cutting diagonally.
+   *  Signed by the lane's own direction, so mirrored layouts still bend the
+   *  right way. */
   function exitRoute(from: CircuitPoint): CircuitPoint[] {
+    const reach = 44 * ds * Math.sign(layout.pitExit.x - layout.pitEntry.x || 1);
     return [from, ...sampleQuadratic(
-      from, { x: pitExit.x - 44, y: from.y }, pitExit,
+      from, { x: layout.pitExit.x - reach, y: from.y }, layout.pitExit,
     )];
   }
 
+  /** Pit entry → pit box, mirroring exitRoute. */
   function entryRoute(target: CircuitPoint): CircuitPoint[] {
-    return [pitEntry, ...sampleQuadratic(
-      pitEntry, { x: pitEntry.x + 44, y: target.y }, target,
+    const reach = 44 * ds * Math.sign(layout.pitExit.x - layout.pitEntry.x || 1);
+    return [layout.pitEntry, ...sampleQuadratic(
+      layout.pitEntry, { x: layout.pitEntry.x + reach, y: target.y }, target,
     )];
   }
 
@@ -348,7 +493,7 @@ export function createTrackRenderer(
     if (entry.isFocused) {
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 1.5;
-      const r = RADIUS + 7;
+      const r = radius() + 7;
       const arm = 5;
       ctx.beginPath();
       for (const [sx, sy] of [[-1, 1], [1, 1], [1, -1], [-1, -1]] as const) {
@@ -362,26 +507,26 @@ export function createTrackRenderer(
     // Status ring + treatments; the team fill never changes with status.
     ctx.globalAlpha = 1;
     if (entry.placement.kind === 'nextGrid') {
-      ring(ctx, RADIUS + 3.5, palette.textMuted, 1);
+      ring(ctx, radius() + 3.5, palette.textMuted, 1);
     } else {
       switch (entry.status) {
         case 'working':
-          ring(ctx, RADIUS + 3.5, 'rgba(255,255,255,0.85)', 1.5);
+          ring(ctx, radius() + 3.5, 'rgba(255,255,255,0.85)', 1.5);
           break;
         case 'idle':
-          ring(ctx, RADIUS + 3.5, palette.statusPit, 1.5);
+          ring(ctx, radius() + 3.5, palette.statusPit, 1.5);
           break;
         case 'done':
-          ring(ctx, RADIUS + 3.5, 'rgba(51,51,51,1)', 3);
+          ring(ctx, radius() + 3.5, 'rgba(51,51,51,1)', 3);
           ctx.setLineDash([4, 4]);
-          ring(ctx, RADIUS + 3.5, '#FFFFFF', 3);
+          ring(ctx, radius() + 3.5, '#FFFFFF', 3);
           ctx.setLineDash([]);
           break;
         case 'blocked': {
           // Flash: 0.4 s fade out / 0.4 s fade in, like the SKAction loop.
           const alpha = 0.25 + 0.75 * Math.abs(Math.sin((Math.PI * nowMs) / 800));
           ctx.globalAlpha = alpha;
-          ring(ctx, RADIUS + 3.5, palette.liveRed, 2);
+          ring(ctx, radius() + 3.5, palette.liveRed, 2);
           ctx.globalAlpha = 1;
           break;
         }
@@ -390,7 +535,7 @@ export function createTrackRenderer(
 
     // Team disc with fixed contrast number.
     ctx.beginPath();
-    ctx.arc(0, 0, RADIUS, 0, Math.PI * 2);
+    ctx.arc(0, 0, radius(), 0, Math.PI * 2);
     ctx.fillStyle = color;
     ctx.fill();
     ctx.lineWidth = 2;
@@ -401,7 +546,7 @@ export function createTrackRenderer(
     if (entry.colorToken.kind === 'pattern') {
       const dashes = [[3, 3], [7, 3], []][entry.colorToken.slot % 3];
       ctx.setLineDash(dashes);
-      ring(ctx, RADIUS + 1, '#FFFFFF', 1.2);
+      ring(ctx, radius() + 1, '#FFFFFF', 1.2);
       ctx.setLineDash([]);
     }
 
@@ -416,21 +561,21 @@ export function createTrackRenderer(
     ctx.textBaseline = 'top';
     if (entry.placement.kind === 'nextGrid') {
       ctx.fillStyle = palette.textMuted;
-      ctx.fillText('NEXT GRID', 0, RADIUS + 6);
+      ctx.fillText('NEXT GRID', 0, radius() + 6);
     } else if (entry.status === 'idle') {
       ctx.fillStyle = palette.statusPit;
-      ctx.fillText('PIT', 0, RADIUS + 6);
+      ctx.fillText('PIT', 0, radius() + 6);
     }
     if (entry.showsNewStint) {
       ctx.fillStyle = '#FFFFFF';
       ctx.textBaseline = 'bottom';
-      ctx.fillText('NEW STINT', 0, -RADIUS - 9);
+      ctx.fillText('NEW STINT', 0, -radius() - 9);
     }
 
     // Incident: warning triangle up-right + restrained smoke.
     if (entry.placement.kind !== 'nextGrid' && entry.status === 'blocked') {
       ctx.save();
-      ctx.translate(RADIUS + 2, -RADIUS - 2);
+      ctx.translate(radius() + 2, -radius() - 2);
       ctx.beginPath();
       ctx.moveTo(0, -6);
       ctx.lineTo(5.5, 4);
@@ -459,7 +604,7 @@ export function createTrackRenderer(
       state.lastSpawn = nowMs;
       state.particles.push({
         x: (id.length * 7 + state.particles.length * 13) % 7 - 3, // deterministic jitter
-        y: -RADIUS,
+        y: -radius(),
         vx: ((state.particles.length % 3) - 1) * 4,
         vy: -16,
         bornAt: nowMs,
@@ -485,7 +630,7 @@ export function createTrackRenderer(
     // Pit boxes are keyed by stable team ID, so box positions do not shuffle
     // when the standings rank changes.
     const teamIDs = sync.teams.map(team => team.id).sort();
-    const signature = `${canvas.width}x${canvas.height}|${teamIDs.join(',')}`;
+    const signature = `${layout.circuit.id}|${canvas.width}x${canvas.height}|${teamIDs.join(',')}`;
     if (signature === staticSignature) return;
     staticSignature = signature;
 
@@ -498,8 +643,11 @@ export function createTrackRenderer(
       dpr * offsetX, dpr * offsetY,
     );
     const ds = designScale;
-    const trackWidth = 22 * ds;
-    const pitWidth = 11 * ds;
+    // Asphalt width. The default suits the stylized circuit, whose legs never
+    // run close together; a layout traced to real proportions needs a narrower
+    // ribbon, or stretches that are genuinely adjacent merge into one road.
+    const trackWidth = (layout.circuit.trackWidth ?? 22) * ds;
+    const pitWidth = trackWidth / 2;
 
     // Fixed technical grid behind the circuit.
     ctx.strokeStyle = 'rgba(255,255,255,0.035)';
@@ -510,7 +658,7 @@ export function createTrackRenderer(
     ctx.stroke();
 
     const circuit = new Path2D();
-    line.forEach((point, index) => (index === 0 ? circuit.moveTo(point.x, point.y) : circuit.lineTo(point.x, point.y)));
+    layout.line.forEach((point, index) => (index === 0 ? circuit.moveTo(point.x, point.y) : circuit.lineTo(point.x, point.y)));
     circuit.closePath();
     const pitGuide = pitGuidePath();
 
@@ -549,6 +697,7 @@ export function createTrackRenderer(
   function pitGuidePath(): Path2D {
     const ds = designScale;
     const reach = 46 * ds;
+    const { pitEntry, pitExit, entryTangent, exitTangent, laneY, pitLaneRect } = layout;
     const laneMinX = pitLaneRect.x;
     const laneMaxX = pitLaneRect.x + pitLaneRect.width;
     const path = new Path2D();
@@ -568,7 +717,7 @@ export function createTrackRenderer(
   }
 
   function drawStartFinish(ctx: CanvasRenderingContext2D, trackWidth: number): void {
-    const start = pointAt(0, line, lengths);
+    const start = pointAt(0, layout.line, layout.lengths);
     const width = trackWidth * 0.42;
     const height = trackWidth + 2;
     const columns = 2;
@@ -590,7 +739,7 @@ export function createTrackRenderer(
   }
 
   function drawPitLane(ctx: CanvasRenderingContext2D, sync: SyncMessage, ds: number): void {
-    const rect = pitLaneRect;
+    const rect = layout.pitLaneRect;
 
     ctx.fillStyle = hexAlpha(palette.card, 0.72);
     ctx.strokeStyle = 'rgba(255,255,255,0.24)';
@@ -608,9 +757,9 @@ export function createTrackRenderer(
     ctx.font = `600 7px ${FONT}`;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
-    ctx.fillText('PIT ENTRY  ›››', pitEntry.x + 10 * ds, trackY + 16 * ds);
+    ctx.fillText('PIT ENTRY  ›››', layout.pitEntry.x + 10 * ds, layout.trackY + 16 * ds);
     ctx.textAlign = 'right';
-    ctx.fillText('‹‹‹  PIT EXIT', pitExit.x - 10 * ds, trackY + 16 * ds);
+    ctx.fillText('‹‹‹  PIT EXIT', layout.pitExit.x - 10 * ds, layout.trackY + 16 * ds);
 
     // One bay per team, sorted by stable team ID.
     pitBoxes = new Map();
@@ -646,7 +795,7 @@ export function createTrackRenderer(
     });
   }
 
-  return { setSync, resize, frame };
+  return { setSync, resize, frame, setCircuit, currentCircuitID };
 }
 
 // MARK: - Drawing helpers

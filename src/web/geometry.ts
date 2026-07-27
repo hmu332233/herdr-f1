@@ -1,3 +1,5 @@
+import type { CircuitDefinition } from './circuits.js';
+
 export interface CircuitPoint {
   x: number;
   y: number;
@@ -10,29 +12,19 @@ export interface Rect {
   height: number;
 }
 
-/** Stylized closed circuit in normalized y-up coordinates (from the Swift
- *  original). Collinear runs keep the straights straight through midpoint
- *  smoothing; only the isolated vertices round into corners. */
-const CONTROL_POINTS: ReadonlyArray<readonly [number, number]> = [
-  // Long start/finish straight feeding a decisive right-side climb.
-  [0.58, 0.10], [0.72, 0.10], [0.78, 0.16],
-  [0.77, 0.43], [0.74, 0.75],
-  // Broad terrain-like crown with one changing-radius transition.
-  [0.67, 0.84], [0.53, 0.92], [0.42, 0.83],
-  [0.30, 0.86], [0.22, 0.78],
-  // Three distinct left-side complexes instead of repeated waves.
-  [0.24, 0.68], [0.18, 0.61], [0.23, 0.53],
-  [0.15, 0.46], [0.20, 0.38], [0.13, 0.27],
-  // Lower hairpin opens progressively onto the main straight.
-  [0.10, 0.17], [0.18, 0.11], [0.38, 0.10],
-];
+/** Smoothing steps emitted per control point. The centerline length is always
+ *  `controlPoints.length * SMOOTHING_STEPS`. */
+export const SMOOTHING_STEPS = 24;
 
-/** Smoothed dense polyline used for drawing and marker placement. */
-export function centerline(rect: Rect): CircuitPoint[] {
-  const anchors = CONTROL_POINTS.map(([px, py]) => {
-    // The natural-circuit concept has a slightly broader footprint (authored
-    // geometry, not view stretching).
-    const x = 0.44 + (px - 0.44) * 1.3;
+/** Smoothed dense polyline used for drawing and marker placement.
+ *
+ *  Each control point contributes one quadratic arc from the midpoint of its
+ *  incoming edge, through the point itself, to the midpoint of its outgoing
+ *  edge. Collinear runs therefore stay straight — their midpoints lie on the
+ *  same line — while isolated vertices round into corners. */
+export function centerline(rect: Rect, circuit: CircuitDefinition): CircuitPoint[] {
+  const anchors = circuit.points.map(([px, py]) => {
+    const x = circuit.spreadAnchor + (px - circuit.spreadAnchor) * circuit.spread;
     return { x: rect.x + x * rect.width, y: rect.y + (1 - py) * rect.height };
   });
   const line: CircuitPoint[] = [];
@@ -43,11 +35,20 @@ export function centerline(rect: Rect): CircuitPoint[] {
     const p2 = anchors[(index + 2) % count];
     const start = midpoint(p0, p1);
     const end = midpoint(p1, p2);
-    for (let step = 0; step < 24; step += 1) {
-      line.push(quadraticPoint(start, p1, end, step / 24));
+    for (let step = 0; step < SMOOTHING_STEPS; step += 1) {
+      line.push(quadraticPoint(start, p1, end, step / SMOOTHING_STEPS));
     }
   }
   return line;
+}
+
+/** Centerline index where a control point lands after smoothing.
+ *
+ *  Control point `i` is the apex of the arc emitted by iteration `i - 1`, so
+ *  its own position appears at the midpoint of that arc. */
+export function centerlineIndexOf(controlIndex: number, count: number): number {
+  const previous = (controlIndex - 1 + count) % count;
+  return previous * SMOOTHING_STEPS + Math.floor(SMOOTHING_STEPS / 2);
 }
 
 /** Cumulative arc length; index i = length up to line[i], last = total. */
