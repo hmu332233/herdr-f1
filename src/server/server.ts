@@ -28,6 +28,7 @@ export interface ServerOptions {
   webRoot: string;
   broadcaster: RaceBroadcaster;
   onFocus: (terminalID: string) => void;
+  onCircuit: (totalLaps: number) => void;
 }
 
 export async function startServer(options: ServerOptions): Promise<DashboardServer> {
@@ -61,6 +62,13 @@ export async function startServer(options: ServerOptions): Promise<DashboardServ
         const message = JSON.parse(String(raw)) as ClientMessage;
         if (message?.type === 'focus' && typeof message.terminalID === 'string') {
           options.onFocus(message.terminalID);
+        } else if (
+          message?.type === 'circuit' && Number.isFinite(message.totalLaps) &&
+          // Bounded: the browser is untrusted, and an absurd distance would
+          // either end the race at once or make it unfinishable.
+          message.totalLaps >= 1 && message.totalLaps <= 200
+        ) {
+          options.onCircuit(message.totalLaps);
         }
       } catch {
         // Malformed client messages are ignored; the browser is untrusted input.

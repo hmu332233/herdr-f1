@@ -11,17 +11,18 @@ describe('identity', () => {
     expect(entryById(session.presentation(), 't1').carNumber).toBe(expected);
   });
 
-  it('assigns 12 unique palette slots, then pattern tokens', () => {
+  it('fills every palette slot uniquely, then falls back to pattern tokens', () => {
     const session = createRaceSession(() => 1);
-    const teams = Array.from({ length: 14 }, (_, i) =>
+    const overflow = 2;
+    const teams = Array.from({ length: RaceRules.paletteSize + overflow }, (_, i) =>
       team(`ws-${i}`, `project-${i}`, [agent(`t-${i}`, 'working')]));
     goLive(session, snap(...teams));
     const tokens = session.presentation().teams.map(t => t.colorToken);
     const palette = tokens.filter(t => t.kind === 'palette');
     const pattern = tokens.filter(t => t.kind === 'pattern');
-    expect(palette).toHaveLength(12);
-    expect(new Set(palette.map(t => t.slot)).size).toBe(12);
-    expect(pattern).toHaveLength(2);
+    expect(palette).toHaveLength(RaceRules.paletteSize);
+    expect(new Set(palette.map(t => t.slot)).size).toBe(RaceRules.paletteSize);
+    expect(pattern).toHaveLength(overflow);
   });
 
   it('keeps identity stable across snapshots', () => {
@@ -134,5 +135,52 @@ describe('grid lifecycle', () => {
     ])));
     expect(entryById(session.presentation(), 't1').isFocused).toBe(true);
     expect(entryById(session.presentation(), 't2').isFocused).toBe(false);
+  });
+});
+
+describe('race distance', () => {
+  it('reports the default distance until told otherwise', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    expect(session.presentation().totalLaps).toBe(RaceRules.totalLaps);
+  });
+
+  it('publishes a new distance and caps headerLap against it', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 40 * RaceRules.baseLapDuration);
+    session.setTotalLaps(50, now);
+    const shown = session.presentation();
+    expect(shown.totalLaps).toBe(50);
+    expect(shown.headerLap).toBeLessThanOrEqual(50);
+  });
+
+  it('keeps distance already covered when the finish moves', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 20 * RaceRules.baseLapDuration);
+    const before = entryById(session.presentation(), 't1').officialDistance;
+    session.setTotalLaps(66, now);
+    expect(entryById(session.presentation(), 't1').officialDistance).toBeCloseTo(before, 6);
+    expect(session.presentation().phase).toBe('live');
+  });
+
+  // Shortening the race below what the leader has run leaves no lap boundary
+  // left to cross, so the Grand Prix has to end there rather than hang.
+  it('finishes at once when shortened below the leader distance', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 30 * RaceRules.baseLapDuration);
+    expect(session.presentation().phase).toBe('live');
+    session.setTotalLaps(10, now);
+    expect(session.presentation().phase).toBe('podium');
+  });
+
+  it('ignores a distance it is already on', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));
+    const now = tickTo(session, 0, 30 * RaceRules.baseLapDuration);
+    session.setTotalLaps(RaceRules.totalLaps, now);
+    expect(session.presentation().phase).toBe('live');
   });
 });

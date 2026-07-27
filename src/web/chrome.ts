@@ -13,7 +13,9 @@ export function createChrome() {
   const standingsEmpty = document.getElementById('standings-empty')!;
 
   function render(sync: SyncMessage): void {
-    lap.textContent = `LAP ${sync.headerLap} / 58`;
+    // Race distance comes from the server, which owns the race: it is told the
+    // selected circuit's distance and caps headerLap against it.
+    lap.textContent = `LAP ${sync.headerLap} / ${sync.totalLaps}`;
     phase.textContent =
       sync.phase === 'awaitingGrid' ? 'FORMATION' : sync.phase === 'live' ? 'RACE LIVE' : 'PODIUM';
     grandPrix.textContent = `GRAND PRIX ${sync.grandPrix}`;

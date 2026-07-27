@@ -16,6 +16,7 @@ let webRoot = '';
 
 async function makeServer(
   onFocus: (id: string) => void = () => {},
+  onCircuit: (totalLaps: number) => void = () => {},
 ): Promise<Dashboard> {
   webRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-f1-web-'));
   fs.writeFileSync(path.join(webRoot, 'index.html'), '<!doctype html><title>Herdr F1</title>');
@@ -23,7 +24,7 @@ async function makeServer(
   const session = createRaceSession();
   loadFixture('grid', session);
   const broadcaster = createRaceBroadcaster(session, () => 1000);
-  dashboard = await startServer({ port: 4990, webRoot, broadcaster, onFocus });
+  dashboard = await startServer({ port: 4990, webRoot, broadcaster, onFocus, onCircuit });
   return dashboard;
 }
 
@@ -90,7 +91,9 @@ describe('startServer', () => {
     const first = await makeServer();
     const session = createRaceSession();
     const broadcaster = createRaceBroadcaster(session, () => 0);
-    const second = await startServer({ port: first.port, webRoot, broadcaster, onFocus: () => {} });
+    const second = await startServer({
+      port: first.port, webRoot, broadcaster, onFocus: () => {}, onCircuit: () => {},
+    });
     try {
       expect(second.port).toBe(first.port + 1);
     } finally {

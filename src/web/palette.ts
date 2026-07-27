@@ -12,10 +12,25 @@ export const palette = {
   statusPit: '#4DA6FF',
   statusDone: '#E0E0E0',
   statusBlocked: '#FF9F0A',
+  /** Constructor liveries, one per palette slot. A team is assigned a slot from
+   *  a stable hash of its workspace ID (see race-session.assignTeamTokens), so
+   *  the colour looks arbitrary but never moves between syncs.
+   *
+   *  Keep this the same length as RaceRules.paletteSize — the server hands out
+   *  slot indices against that count, and a shorter array here would wrap two
+   *  teams onto one colour. */
   teamColors: [
-    '#E10600', '#00A3E0', '#00C853', '#FF8700',
-    '#A855F7', '#00E5FF', '#FFD500', '#F72585',
-    '#00BFA5', '#C58B4E', '#90A4AE', '#6C63FF',
+    '#EF8733', // McLaren
+    '#75F1D3', // Mercedes
+    '#4570C0', // Red Bull Racing
+    '#D52E37', // Ferrari
+    '#3267D4', // Williams
+    '#7091F8', // VCARB
+    '#4B9774', // Aston Martin
+    '#DFE1E2', // Haas
+    '#EB4526', // Audi
+    '#479FE2', // Alpine
+    '#AAAADD', // Cadillac
   ],
 } as const;
 

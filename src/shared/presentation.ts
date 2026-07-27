@@ -47,7 +47,7 @@ export interface EntryPresentation {
   colorToken: TeamColorToken;
   /** Official fractional laps. Owns rank, lap labels, gap, and finish. */
   officialDistance: number;
-  /** One-based lap derived from official distance, capped at 58. */
+  /** One-based lap derived from official distance, capped at the race distance. */
   lap: number;
   /** `LAP n`, `PIT`, `DONE · LAP n`, `INCIDENT · LAP n`, `RETIRED · LAP n`, `NEXT GRID`. */
   statusText: string;
@@ -121,8 +121,12 @@ export interface PodiumResult {
 export interface RacePresentation {
   phase: RacePhase;
   grandPrix: number;
-  /** One-based leader lap for the `LAP n / 58` header, capped at 58. */
+  /** One-based leader lap for the `LAP n / totalLaps` header, capped at it. */
   headerLap: number;
+  /** Race distance in laps, for the circuit currently being raced. The browser
+   *  renders `LAP headerLap / totalLaps` from this rather than a constant, since
+   *  each venue has its own published distance. */
+  totalLaps: number;
   teams: TeamStanding[];
   podium: PodiumResult | null;
   connection: ConnectionState;

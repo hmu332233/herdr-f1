@@ -12,7 +12,11 @@
         <span id="live-pill"><span class="dot"></span><span id="phase-text">RACE LIVE</span></span>
         <span id="lap-text" class="mono">LAP 1 / 58</span>
         <span id="gp-text" class="muted">GRAND PRIX 1</span>
-        <span id="connection-text" class="mono push-right"></span>
+        <label id="circuit-picker" class="push-right">
+          <span class="visually-hidden">Circuit</span>
+          <select id="circuit-select" aria-label="Circuit"></select>
+        </label>
+        <span id="connection-text" class="mono"></span>
       </header>
       <div id="track-wrap">
         <canvas id="track" aria-hidden="true"></canvas>
