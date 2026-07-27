@@ -1,4 +1,5 @@
 node_modules/
+dist/
 
 # Local environment and OS files
 .env
