@@ -21,6 +21,8 @@ export const RaceRules = {
   newStintDuration: 4.0,
   paletteSize: 12,
   maximumGridNumber: 99,
+  /** Team radio lines retained per Grand Prix; older ones fall off the back. */
+  radioHistoryLimit: 40,
 } as const;
 
 const MASK_64 = 0xffffffffffffffffn;

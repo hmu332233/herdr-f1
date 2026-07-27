@@ -5268,6 +5268,8 @@ const RaceRules = {
     newStintDuration: 4.0,
     paletteSize: 12,
     maximumGridNumber: 99,
+    /** Team radio lines retained per Grand Prix; older ones fall off the back. */
+    radioHistoryLimit: 40,
 };
 const MASK_64 = 0xffffffffffffffffn;
 /** FNV-1a 64-bit: deliberately process-independent so colors and numbers stay
@@ -5741,7 +5743,74 @@ function canonicalEventName(name) {
     return name.replaceAll('.', '_');
 }
 
+;// CONCATENATED MODULE: ./src/server/radio.ts
+
+/**
+ * Team radio phrasing. Every line is invented race commentary chosen from a
+ * fixed script by status transition — the dashboard never reads terminal
+ * output, so no agent text can ever reach here.
+ *
+ * Selection is a pure function of the seed, so one transition keeps the same
+ * line for as long as it stays in the history window: sync re-sends the whole
+ * window several times a second and the text must not flicker between them.
+ */
+const SCRIPTS = {
+    boxBox: [
+        'Box this lap, box this lap.',
+        'In the pits, in the pits.',
+        'Coming in for service.',
+        'Understood, box now.',
+    ],
+    greenAgain: [
+        "Out of the pits, let's go.",
+        'Back to green, pushing now.',
+        'Clear track ahead, hammer time.',
+        'Rejoining the circuit.',
+    ],
+    incident: [
+        "We have a problem, I'm stopping.",
+        "Something's not right, need help.",
+        'Losing power, pulling over.',
+        "I'm stuck out here.",
+    ],
+    recovered: [
+        'All clear, back under way.',
+        'Recovered, resuming the race.',
+        'Problem solved, back to it.',
+        'Good to go again.',
+    ],
+    chequered: [
+        "That's the chequered flag. Great job.",
+        'Race complete, well done everyone.',
+        'Crossed the line. Superb work.',
+        "That's a finish, brilliant stuff.",
+    ],
+    newStint: [
+        'New driver in the car.',
+        'Fresh stint, fresh tyres.',
+        'Driver change complete.',
+        'New hands on the wheel.',
+    ],
+    retired: [
+        "That's a retirement. Into the garage.",
+        'Car is out of the race.',
+        'Retiring the car, that is all.',
+        "We're done for today.",
+    ],
+};
+/**
+ * Picks the radio line for one transition. The seed should identify the
+ * transition (terminal, lap, kind) so replays of the same event read
+ * identically and tests stay deterministic.
+ */
+function radioText(kind, seed) {
+    const script = SCRIPTS[kind];
+    const index = Number(stableHash(`${kind}|${seed}`) % BigInt(script.length));
+    return script[index];
+}
+
 ;// CONCATENATED MODULE: ./src/server/race-session.ts
+
 
 /**
  * In-memory race state owner. Consumes authoritative projected herdr
@@ -5750,7 +5819,11 @@ function canonicalEventName(name) {
  * lives only as long as this object. Official distance advances exclusively
  * from accepted elapsed race time, never from render frames.
  */
-function createRaceSession(paceSource = seededPace) {
+function createRaceSession(paceSource = seededPace, 
+/** Wall clock used only to stamp team radio. The race itself runs on the
+ *  monotonic clock passed to advance(); this is injected separately so tests
+ *  get stable timestamps. */
+wallClock = () => new Date()) {
     let lastTick = null;
     /** Accepted live seconds since the current Grand Prix started. */
     let raceTime = 0;
@@ -5773,6 +5846,9 @@ function createRaceSession(paceSource = seededPace) {
     const teamOrder = new Map();
     let nextTeamOrder = 0;
     const teamLabels = new Map();
+    /** Recent team radio for the current Grand Prix, oldest first. */
+    let radio = [];
+    let nextRadioID = 1;
     // MARK: - Inputs
     function apply(update, now) {
         if (update.kind === 'snapshot')
@@ -5939,6 +6015,8 @@ function createRaceSession(paceSource = seededPace) {
     function resetGrid() {
         raceTime = 0;
         podiumElapsed = 0;
+        // Radio belongs to the Grand Prix that produced it.
+        radio = [];
         const orderedIDs = [...entries.keys()].sort((a, b) => compareOrderKeys(orderKey(entries.get(a)), orderKey(entries.get(b))));
         const circulating = [];
         for (const id of orderedIDs) {
@@ -5965,6 +6043,46 @@ function createRaceSession(paceSource = seededPace) {
             entry.terminalID,
         ];
     }
+    // MARK: - Team radio
+    /** Appends one radio line for a transition that just happened, trimming the
+     *  oldest once the window is full. Callers must only fire this on a real
+     *  transition — never on a snapshot that merely restates known state. */
+    function emitRadio(entry, kind) {
+        const lap = lapOf(entry);
+        const id = nextRadioID++;
+        radio.push({
+            id,
+            kind,
+            terminalID: entry.terminalID,
+            carNumber: entry.carNumber,
+            colorToken: teamTokens.get(entry.teamID) ?? { kind: 'palette', slot: 0 },
+            teamLabel: teamLabels.get(entry.teamID) ?? entry.teamID,
+            tabLabel: entry.tabLabel,
+            lap,
+            timeText: clockText(wallClock()),
+            // Seeded by the transition itself, so the line a viewer is reading never
+            // changes underneath them as sync re-sends the window.
+            text: radioText(kind, `${grandPrix}|${entry.terminalID}|${lap}|${id}`),
+        });
+        if (radio.length > RaceRules.radioHistoryLimit) {
+            radio = radio.slice(radio.length - RaceRules.radioHistoryLimit);
+        }
+    }
+    /** The status change a radio line should announce, or null when the
+     *  transition is not worth breaking radio silence for. */
+    function radioKindFor(previous, next) {
+        if (next === 'blocked')
+            return 'incident';
+        if (previous === 'blocked')
+            return 'recovered';
+        if (next === 'done')
+            return 'chequered';
+        if (previous === 'working' && next === 'idle')
+            return 'boxBox';
+        if (previous === 'idle' && next === 'working')
+            return 'greenAgain';
+        return null;
+    }
     // MARK: - Snapshot reconciliation
     function reconcile(snapshot) {
         const bootstrapping = !hasSnapshot;
@@ -5975,13 +6093,17 @@ function createRaceSession(paceSource = seededPace) {
                 teamOrder.set(team.id, nextTeamOrder++);
         }
         assignTeamTokens(snapshot.teams.map(team => team.id));
+        // The bootstrap snapshot establishes the grid rather than changing it;
+        // announcing it would open every race with a burst of radio for cars that
+        // never actually did anything.
+        const announces = !bootstrapping;
         const seen = new Set();
         const newcomers = [];
         for (const team of snapshot.teams) {
             for (const agent of team.agents) {
                 seen.add(agent.terminalID);
                 if (entries.has(agent.terminalID))
-                    updateEntry(agent, team.id);
+                    updateEntry(agent, team.id, announces);
                 else
                     newcomers.push([agent, team.id]);
             }
@@ -5993,15 +6115,18 @@ function createRaceSession(paceSource = seededPace) {
             addEntry(agent, teamID);
         presentInLatestSnapshot = seen;
         for (const [id, entry] of entries) {
-            if (!seen.has(id))
-                entry.isRetired = true;
+            if (seen.has(id) || entry.isRetired)
+                continue;
+            entry.isRetired = true;
+            if (announces)
+                emitRadio(entry, 'retired');
         }
         if (bootstrapping) {
             phase = 'live';
             resetGrid();
         }
     }
-    function updateEntry(agent, teamID) {
+    function updateEntry(agent, teamID, announces) {
         const entry = entries.get(agent.terminalID);
         // A terminal reappearing before race end restores its existing entry.
         entry.isRetired = false;
@@ -6011,11 +6136,14 @@ function createRaceSession(paceSource = seededPace) {
             agent.agentSessionReference !== null &&
             entry.sessionReference !== agent.agentSessionReference) {
             entry.newStintUntil = raceTime + RaceRules.newStintDuration;
+            if (announces)
+                emitRadio(entry, 'newStint');
         }
         if (agent.agentSessionReference !== null) {
             entry.sessionReference = agent.agentSessionReference;
         }
         if (entry.status !== agent.status) {
+            const kind = radioKindFor(entry.status, agent.status);
             if (agent.status === 'blocked') {
                 entry.incidentInPit = entry.status === 'idle' || entry.isQueuedNextGrid;
             }
@@ -6023,6 +6151,9 @@ function createRaceSession(paceSource = seededPace) {
                 entry.incidentInPit = false;
             }
             entry.status = agent.status;
+            // Emitted after the status lands so the line quotes the new state.
+            if (announces && kind !== null)
+                emitRadio(entry, kind);
         }
         entry.tabLabel = agent.tabLabel;
         entry.agentKind = agent.agentKind;
@@ -6112,6 +6243,7 @@ function createRaceSession(paceSource = seededPace) {
             podium: frozenPodium,
             connection: connection,
             overlay: currentOverlay,
+            radio: [...radio],
         };
     }
     function headerLap() {
@@ -6164,7 +6296,7 @@ function createRaceSession(paceSource = seededPace) {
         }));
     }
     function present(entry) {
-        const lap = Math.min(RaceRules.totalLaps, Math.floor(entry.official) + 1);
+        const lap = lapOf(entry);
         const progress = entry.display - Math.floor(entry.display);
         let placement;
         let statusText;
@@ -6251,6 +6383,16 @@ function createRaceSession(paceSource = seededPace) {
 // MARK: - Helpers
 function clampPace(value) {
     return Math.min(Math.max(value, RaceRules.paceMin), RaceRules.paceMax);
+}
+/** Local wall-clock `HH:MM:SS`. */
+function clockText(now) {
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+/** One-based lap from official distance, capped at the finish. Shared so the
+ *  lap a radio line quotes always matches the standings. */
+function lapOf(entry) {
+    return Math.min(RaceRules.totalLaps, Math.floor(entry.official) + 1);
 }
 function gapText(gap) {
     if (gap < 1)

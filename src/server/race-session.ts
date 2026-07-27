@@ -1,8 +1,10 @@
 import { RaceRules, seededPace, stableHash, type RacePaceSource } from './rules.js';
+import { radioText } from './radio.js';
 import type { HerdrUpdate, SourceAgent, SourceSnapshot } from './herdr/types.js';
 import type {
   AgentStatus, ConnectionState, EntryPlacement, EntryPresentation, PodiumResult,
-  RaceOverlay, RacePhase, RacePresentation, TeamColorToken, TeamStanding,
+  RaceOverlay, RacePhase, RacePresentation, RadioKind, RadioMessage, TeamColorToken,
+  TeamStanding,
 } from '../shared/presentation.js';
 
 interface PaceState {
@@ -39,7 +41,13 @@ interface Entry {
  * lives only as long as this object. Official distance advances exclusively
  * from accepted elapsed race time, never from render frames.
  */
-export function createRaceSession(paceSource: RacePaceSource = seededPace) {
+export function createRaceSession(
+  paceSource: RacePaceSource = seededPace,
+  /** Wall clock used only to stamp team radio. The race itself runs on the
+   *  monotonic clock passed to advance(); this is injected separately so tests
+   *  get stable timestamps. */
+  wallClock: () => Date = () => new Date(),
+) {
   let lastTick: number | null = null;
   /** Accepted live seconds since the current Grand Prix started. */
   let raceTime = 0;
@@ -64,6 +72,10 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
   const teamOrder = new Map<string, number>();
   let nextTeamOrder = 0;
   const teamLabels = new Map<string, string>();
+
+  /** Recent team radio for the current Grand Prix, oldest first. */
+  let radio: RadioMessage[] = [];
+  let nextRadioID = 1;
 
   // MARK: - Inputs
 
@@ -243,6 +255,8 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
   function resetGrid(): void {
     raceTime = 0;
     podiumElapsed = 0;
+    // Radio belongs to the Grand Prix that produced it.
+    radio = [];
     const orderedIDs = [...entries.keys()].sort((a, b) =>
       compareOrderKeys(orderKey(entries.get(a)!), orderKey(entries.get(b)!)),
     );
@@ -272,6 +286,44 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
     ];
   }
 
+  // MARK: - Team radio
+
+  /** Appends one radio line for a transition that just happened, trimming the
+   *  oldest once the window is full. Callers must only fire this on a real
+   *  transition — never on a snapshot that merely restates known state. */
+  function emitRadio(entry: Entry, kind: RadioKind): void {
+    const lap = lapOf(entry);
+    const id = nextRadioID++;
+    radio.push({
+      id,
+      kind,
+      terminalID: entry.terminalID,
+      carNumber: entry.carNumber,
+      colorToken: teamTokens.get(entry.teamID) ?? { kind: 'palette', slot: 0 },
+      teamLabel: teamLabels.get(entry.teamID) ?? entry.teamID,
+      tabLabel: entry.tabLabel,
+      lap,
+      timeText: clockText(wallClock()),
+      // Seeded by the transition itself, so the line a viewer is reading never
+      // changes underneath them as sync re-sends the window.
+      text: radioText(kind, `${grandPrix}|${entry.terminalID}|${lap}|${id}`),
+    });
+    if (radio.length > RaceRules.radioHistoryLimit) {
+      radio = radio.slice(radio.length - RaceRules.radioHistoryLimit);
+    }
+  }
+
+  /** The status change a radio line should announce, or null when the
+   *  transition is not worth breaking radio silence for. */
+  function radioKindFor(previous: AgentStatus, next: AgentStatus): RadioKind | null {
+    if (next === 'blocked') return 'incident';
+    if (previous === 'blocked') return 'recovered';
+    if (next === 'done') return 'chequered';
+    if (previous === 'working' && next === 'idle') return 'boxBox';
+    if (previous === 'idle' && next === 'working') return 'greenAgain';
+    return null;
+  }
+
   // MARK: - Snapshot reconciliation
 
   function reconcile(snapshot: SourceSnapshot): void {
@@ -284,12 +336,17 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
     }
     assignTeamTokens(snapshot.teams.map(team => team.id));
 
+    // The bootstrap snapshot establishes the grid rather than changing it;
+    // announcing it would open every race with a burst of radio for cars that
+    // never actually did anything.
+    const announces = !bootstrapping;
+
     const seen = new Set<string>();
     const newcomers: Array<[SourceAgent, string]> = [];
     for (const team of snapshot.teams) {
       for (const agent of team.agents) {
         seen.add(agent.terminalID);
-        if (entries.has(agent.terminalID)) updateEntry(agent, team.id);
+        if (entries.has(agent.terminalID)) updateEntry(agent, team.id, announces);
         else newcomers.push([agent, team.id]);
       }
     }
@@ -300,7 +357,9 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
 
     presentInLatestSnapshot = seen;
     for (const [id, entry] of entries) {
-      if (!seen.has(id)) entry.isRetired = true;
+      if (seen.has(id) || entry.isRetired) continue;
+      entry.isRetired = true;
+      if (announces) emitRadio(entry, 'retired');
     }
 
     if (bootstrapping) {
@@ -309,7 +368,7 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
     }
   }
 
-  function updateEntry(agent: SourceAgent, teamID: string): void {
+  function updateEntry(agent: SourceAgent, teamID: string, announces: boolean): void {
     const entry = entries.get(agent.terminalID)!;
     // A terminal reappearing before race end restores its existing entry.
     entry.isRetired = false;
@@ -322,18 +381,22 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
       entry.sessionReference !== agent.agentSessionReference
     ) {
       entry.newStintUntil = raceTime + RaceRules.newStintDuration;
+      if (announces) emitRadio(entry, 'newStint');
     }
     if (agent.agentSessionReference !== null) {
       entry.sessionReference = agent.agentSessionReference;
     }
 
     if (entry.status !== agent.status) {
+      const kind = radioKindFor(entry.status, agent.status);
       if (agent.status === 'blocked') {
         entry.incidentInPit = entry.status === 'idle' || entry.isQueuedNextGrid;
       } else {
         entry.incidentInPit = false;
       }
       entry.status = agent.status;
+      // Emitted after the status lands so the line quotes the new state.
+      if (announces && kind !== null) emitRadio(entry, kind);
     }
 
     entry.tabLabel = agent.tabLabel;
@@ -429,6 +492,7 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
       podium: frozenPodium,
       connection: connection,
       overlay: currentOverlay,
+      radio: [...radio],
     };
   }
 
@@ -491,7 +555,7 @@ export function createRaceSession(paceSource: RacePaceSource = seededPace) {
   }
 
   function present(entry: Entry): EntryPresentation {
-    const lap = Math.min(RaceRules.totalLaps, Math.floor(entry.official) + 1);
+    const lap = lapOf(entry);
     const progress = entry.display - Math.floor(entry.display);
 
     let placement: EntryPlacement;
@@ -579,6 +643,18 @@ export type RaceSession = ReturnType<typeof createRaceSession>;
 
 function clampPace(value: number): number {
   return Math.min(Math.max(value, RaceRules.paceMin), RaceRules.paceMax);
+}
+
+/** Local wall-clock `HH:MM:SS`. */
+function clockText(now: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+/** One-based lap from official distance, capped at the finish. Shared so the
+ *  lap a radio line quotes always matches the standings. */
+function lapOf(entry: Entry): number {
+  return Math.min(RaceRules.totalLaps, Math.floor(entry.official) + 1);
 }
 
 function gapText(gap: number): string {

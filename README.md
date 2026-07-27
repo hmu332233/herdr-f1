@@ -89,6 +89,16 @@ already in use, Herdr F1 automatically finds the next available port.
 | `done` | Finished racing |
 | `blocked` | Stopped after an incident |
 
+### Team radio
+
+Status changes are announced as pit-wall radio along the bottom of the screen:
+a car heading for the pits, an incident, a chequered flag. Select a line to jump
+to that agent's Herdr terminal.
+
+Radio lines are invented commentary picked from a fixed script by which status
+change occurred, exactly like laps and points. **They are never an agent's
+actual output** — the dashboard cannot read what an agent says.
+
 The dashboard reads Herdr session status and only sends a terminal-focus command
 when you select a car. It does not collect terminal output or conversation content,
 and the server binds only to `127.0.0.1` to prevent external access.

@@ -1,5 +1,6 @@
 import './style.css';
 import { createChrome } from './chrome.js';
+import { createRadioTicker } from './radio.js';
 import { createStandingsPanel } from './standings.js';
 import { createTrackRenderer } from './track.js';
 import type { SyncMessage } from '../shared/protocol.js';
@@ -14,6 +15,16 @@ const sendFocus = (terminalID: string): void => {
 const chrome = createChrome();
 const standings = createStandingsPanel(document.getElementById('standings')!, sendFocus);
 const track = createTrackRenderer(document.getElementById('track') as HTMLCanvasElement, sendFocus);
+const radio = createRadioTicker(
+  {
+    panel: document.getElementById('radio-column')!,
+    toggle: document.getElementById('radio-toggle') as HTMLButtonElement,
+    count: document.getElementById('radio-count')!,
+    container: document.getElementById('radio')!,
+    empty: document.getElementById('radio-empty')!,
+  },
+  sendFocus,
+);
 
 let sync: SyncMessage | null = null;
 
@@ -29,6 +40,7 @@ function connect(): void {
     sync = JSON.parse(event.data as string) as SyncMessage;
     chrome.render(sync);
     standings.render(sync);
+    radio.render(sync);
     track.setSync(sync, performance.now());
   };
   socket.onclose = () => setTimeout(connect, 1000);
