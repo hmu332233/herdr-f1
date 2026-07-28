@@ -16,6 +16,9 @@ const MIME: Record<string, string> = {
   '.json': 'application/json',
   '.map': 'application/json',
   '.woff2': 'font/woff2',
+  // Required for the install prompt: served as the octet-stream fallback the
+  // browser ignores the manifest entirely and the app is not installable.
+  '.webmanifest': 'application/manifest+json',
 };
 
 export interface DashboardServer {

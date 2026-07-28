@@ -21,6 +21,7 @@ async function makeServer(
   webRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'herdr-f1-web-'));
   fs.writeFileSync(path.join(webRoot, 'index.html'), '<!doctype html><title>Herdr F1</title>');
   fs.writeFileSync(path.join(webRoot, 'app.js'), 'console.log(1)');
+  fs.writeFileSync(path.join(webRoot, 'manifest.webmanifest'), '{"name":"Herdr F1"}');
   const session = createRaceSession();
   loadFixture('grid', session);
   const broadcaster = createRaceBroadcaster(session, () => 1000);
@@ -45,6 +46,15 @@ describe('startServer', () => {
     const js = await fetch(`http://127.0.0.1:${port}/app.js`);
     expect(js.status).toBe(200);
     expect(js.headers.get('content-type')).toContain('text/javascript');
+  });
+
+  it('serves the web manifest as application/manifest+json', async () => {
+    // Under the octet-stream fallback the browser ignores the manifest and the
+    // dashboard silently stops being installable, so the type is load-bearing.
+    const { port } = await makeServer();
+    const manifest = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`);
+    expect(manifest.status).toBe(200);
+    expect(manifest.headers.get('content-type')).toBe('application/manifest+json');
   });
 
   it('404s missing files and refuses path traversal', async () => {

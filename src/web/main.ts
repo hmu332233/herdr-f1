@@ -102,3 +102,14 @@ new ResizeObserver(() => {
   track.resize();
   if (sync) track.frame(performance.now());
 }).observe(document.getElementById('track-wrap')!);
+
+// Registers the worker that makes the dashboard installable as its own window.
+// It caches nothing (see public/sw.js) — this is purely so the browser offers
+// the install action. A failure here costs only that offer, so it is swallowed:
+// the dashboard itself works the same in a tab.
+if ('serviceWorker' in navigator) {
+  // After load, so registration never competes with the first race sync.
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
