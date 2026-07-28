@@ -380,3 +380,153 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .radio-row.is-new { animation: none; }
 }
+
+/* ── Narrow viewports ─────────────────────────────────────────────────────────
+   The side-by-side composition assumes a wide window. Below this the two
+   columns each get too narrow to read — the standings truncate every label and
+   wrap the status badges onto three lines, while the track becomes a tall sliver
+   with the circuit drawn tiny in the middle of it.
+
+   So the columns stack and the page scrolls instead of each pane scrolling
+   inside a fixed viewport. 900px is where the 45% standings column stops fitting
+   a `workspace / tab` label plus its status badge on one line. */
+@media (max-width: 900px) {
+  /* The desktop layout pins everything to the viewport and hides the overflow.
+     Stacked, the page itself is the scroll container. */
+  body { overflow-y: auto; overflow-x: hidden; }
+
+  #app {
+    grid-template-columns: minmax(0, 1fr);
+    /* auto rows, not 1fr: each pane takes the height its content needs and the
+       page grows. A 1fr track row would keep squeezing the circuit on a short
+       phone screen.
+
+       No min-height either: at 100dvh the grid stretches its rows to fill the
+       viewport, which reintroduces the dead band under the circuit and stops the
+       standings from growing past the fold. The page is the scroll container, so
+       it should be exactly as tall as the three panes. */
+    grid-template-rows: auto auto auto;
+    height: auto;
+    overflow: visible;
+  }
+
+  #track-column {
+    /* No longer a left column. */
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  #track-wrap {
+    /* The canvas letterboxes its fixed 620x540 scene into whatever box it gets
+       (see track.ts sceneScale), so any other aspect is dead space. Matching it
+       here is what removes the empty band under the circuit. */
+    aspect-ratio: 620 / 540;
+    /* Cap the height so the standings stay reachable without a long scroll, and
+       let `max-width` keep the box proportional when that cap bites. Capping
+       height alone would letterbox the canvas inside a too-wide box on a short
+       landscape screen; narrowing the box in step keeps the circuit as large as
+       the height allows and centres it.
+
+       A `min-height` floor is deliberately avoided: it outranks `max-height` in
+       CSS, so on a 390px-tall landscape phone it would win and reintroduce the
+       letterboxing this pairing exists to prevent. */
+    max-height: 60dvh;
+    max-width: calc(60dvh * 620 / 540);
+    margin-inline: auto;
+    width: 100%;
+    flex: none;
+  }
+
+  /* The desktop panes clip their overflow so each scrolls internally. Stacked,
+     that clipping is what cut the standings off mid-row: the page is the scroll
+     container now, so the panes must be allowed to be as tall as their content.
+
+     `min-height: auto` undoes the desktop `min-height: 0`. Without it a flex item
+     is allowed to be shorter than its content, so the column reports a 63px
+     height with eight rows spilling out of it — visually similar here, but it
+     leaves the panes' backgrounds and borders drawn in the wrong place. */
+  #track-column,
+  #standings-column,
+  #radio-column { overflow: visible; min-height: auto; }
+
+  #standings-column { border-bottom: 1px solid var(--border); }
+  /* `flex: 1 1 0` + `min-height: 0` is what makes this scroll inside a fixed
+     column on desktop. Stacked it must instead be sized by its content, so the
+     column grows and the page scrolls. */
+  #standings-scroll { flex: none; min-height: auto; overflow-y: visible; }
+
+  #radio-column {
+    grid-column: auto;
+    height: auto;
+    border-top: none;
+  }
+  /* Collapsed still means header-only, but as content height rather than a
+     fixed box. */
+  #radio-column.is-collapsed { height: auto; }
+  /* The radio is an unbounded log, so unlike the standings it keeps a cap and
+     scrolls inside it — otherwise a long race makes the page arbitrarily tall
+     and pushes the standings far above the fold. */
+  #radio-scroll { flex: none; min-height: auto; max-height: 40dvh; overflow-y: auto; }
+
+  /* The header no longer has room for one line. Let it wrap and grow: the track
+     below is sized from its own aspect ratio, so a taller header pushes content
+     down rather than crushing the circuit. */
+  .chrome {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 46px;
+    padding: 8px 14px;
+    row-gap: 6px;
+    overflow: visible;
+  }
+  /* Undo the desktop no-shrink rules — with wrapping they would force overflow
+     instead of moving an item to the next line. */
+  #live-pill, #lap-text, #gp-text, #connection-text, #flag-pill { flex: 0 1 auto; }
+  /* The picker is the widest item and the one whose text can be shortened, so it
+     shrinks to keep the telemetry badge on the same wrapped line instead of
+     spilling onto a third. */
+  #circuit-picker { min-width: 0; flex: 0 1 auto; }
+  #circuit-select { max-width: 150px; }
+  /* `margin-left: auto` is what pushed these to the far right of a single row;
+     wrapped, it would strand each on a line of its own. */
+  .chrome .push-right { margin-left: 0; }
+}
+
+/* Phones. The standings row is the part that suffers most: two grid columns of
+   text plus a badge do not fit beside the car-number chip. */
+@media (max-width: 560px) {
+  /* Tighter tracking buys back enough width for the header to settle on two
+     wrapped lines rather than three. */
+  .chrome { letter-spacing: 1px; column-gap: 8px; }
+  .panel-title { letter-spacing: 2px; }
+  /* The venue name is the most abbreviable thing up here — the flag emoji plus a
+     few letters still identifies the circuit, and the full name is one tap away
+     in the open dropdown. Shrinking it is what keeps TELEMETRY LIVE on the same
+     line as the flag pill. */
+  #circuit-select { max-width: 108px; }
+
+  #standings-scroll { padding: 8px; }
+  #standings { gap: 8px; }
+
+  .agent-row {
+    /* Chip on its own column, text stacked beside it: the label gets the full
+       remaining width instead of sharing the row with the status badge. */
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 8px;
+    padding: 8px 10px;
+  }
+  /* Status moves under the label rather than beside it, so `DONE · LAP 12`
+     stops wrapping onto three lines in a squeezed column. */
+  .agent-sub { flex-wrap: wrap; row-gap: 3px; }
+
+  /* Team header: the stats are secondary, so they wrap under the name instead of
+     truncating it. */
+  .team-header { height: auto; min-height: 32px; flex-wrap: wrap; padding: 6px 10px; row-gap: 2px; }
+  .team-stats { margin-left: 0; flex-basis: 100%; }
+
+  /* The radio line is time + lap + car + team + message on one flex row. On a
+     phone the message is the point, so the metadata wraps above it and the text
+     keeps the full width. */
+  .radio-row { flex-wrap: wrap; column-gap: 8px; row-gap: 2px; padding: 6px 8px; }
+  .radio-text { flex-basis: 100%; }
+}
