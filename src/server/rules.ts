@@ -19,6 +19,12 @@ export const RaceRules = {
   newEntrantDeficit: 0.15,
   /** How long the transient NEW STINT treatment stays visible (race seconds). */
   newStintDuration: 4.0,
+  /** Pace of the still-running cars while the yellow flag is out, relative to
+   *  nominal. A stopped car brings out the safety car, so the rest of the field
+   *  slows and holds position instead of racing past the incident. Scoring is
+   *  genuinely slowed — not just the animation — so the standings a viewer reads
+   *  match the motion they watched. */
+  safetyCarFactor: 0.4,
   /** Number of distinct constructor liveries available. Must match the length
    *  of palette.teamColors on the client: slots are handed out against this
    *  count, and teams beyond it fall back to pattern outlines. */

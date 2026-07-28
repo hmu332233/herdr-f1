@@ -27,6 +27,22 @@ export type EntryPlacement =
   | { kind: 'retired' }
   | { kind: 'nextGrid' };
 
+/** Track condition, in the sense a marshal would signal it.
+ *
+ *  `yellow` is raised while any car is stopped on the circuit — a blocked
+ *  agent — and cleared as soon as the last of them is recovered. Unlike
+ *  RaceOverlay this is not full-screen and does not suspend anything: the race
+ *  keeps scoring underneath it, so it is a separate field rather than another
+ *  overlay kind. */
+export type FlagState =
+  | { kind: 'green' }
+  | {
+      kind: 'yellow';
+      /** Terminal IDs of the cars that caused it, in standings order. The
+       *  dashboard flashes exactly these entries. */
+      terminalIDs: string[];
+    };
+
 /** Full-screen connection/race condition layered over the race phase. */
 export type RaceOverlay =
   | { kind: 'none' }
@@ -56,6 +72,10 @@ export interface EntryPresentation {
   displaySpeed: number;
   isFocused: boolean;
   showsNewStint: boolean;
+  /** This car is why the yellow flag is out, so it flashes with the track.
+   *  Blocked and still in the race — a blocked agent that has retired or is
+   *  queued for the next grid is off the circuit and brings out nothing. */
+  causesYellowFlag: boolean;
 }
 
 /** Why a radio message fired. Derived purely from agent status transitions —
@@ -131,6 +151,8 @@ export interface RacePresentation {
   podium: PodiumResult | null;
   connection: ConnectionState;
   overlay: RaceOverlay;
+  /** Track condition. Yellow while any car is stopped on the circuit. */
+  flag: FlagState;
   /** Recent team radio, oldest first, capped at RaceRules.radioHistoryLimit.
    *  Sync carries the whole window rather than deltas, so a reconnecting or
    *  reloading browser recovers the backlog for free. */

@@ -17,6 +17,9 @@ const DESIGN_H = 540;
 const RADIUS = 12.5;
 const PIT_ROUTE_SECONDS = 1.4;
 const PIT_RETURN_SPEED = 1 / 12;
+/** Yellow-flag flash period, matching the blocked marker ring's 0.8 s loop so
+ *  the track edge and the cars that caused it pulse together. */
+const FLAG_FLASH_PERIOD = 800;
 
 const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
 
@@ -219,6 +222,9 @@ export function createTrackRenderer(
   let staticCanvas: HTMLCanvasElement | null = null;
   let staticSignature = '';
   let pitBoxes = new Map<string, CircuitPoint>();
+  /** Asphalt width in scene units for the current circuit. Read by the live
+   *  layer too, so the flashing yellow edge lands exactly on the baked one. */
+  let trackWidth = (layout.circuit.trackWidth ?? 22) * ds;
   const markers = new Map<string, MarkerRuntime>();
   // Entries present in the first sync are already in the race. New browser
   // sessions must render them at their authoritative position, while agents
@@ -259,6 +265,9 @@ export function createTrackRenderer(
     const next = circuitByID(circuitID);
     if (next.id === layout.circuit.id) return;
     layout = buildLayout(next);
+    // The live yellow-flag edge is drawn from this, and may be drawn before the
+    // static canvas is next rebuilt.
+    trackWidth = (layout.circuit.trackWidth ?? 22) * ds;
     staticSignature = '';
     pitBoxes = new Map();
     for (const marker of markers.values()) {
@@ -310,6 +319,10 @@ export function createTrackRenderer(
       dpr * sceneScale, 0, 0, dpr * sceneScale,
       dpr * offsetX, dpr * offsetY,
     );
+
+    // Under the markers: a stopped car is what raised the flag, so it must stay
+    // the most visible thing on the circuit.
+    if (currentSync.flag.kind === 'yellow') drawYellowFlagEdge(ctx, nowMs);
 
     const elapsed = (nowMs - receivedAt) / 1000;
     const entries = currentSync.teams.flatMap(team => team.entries);
@@ -573,10 +586,27 @@ export function createTrackRenderer(
           break;
         case 'blocked': {
           // Flash: 0.4 s fade out / 0.4 s fade in, like the SKAction loop.
-          const alpha = 0.25 + 0.75 * Math.abs(Math.sin((Math.PI * nowMs) / 800));
+          const alpha = prefersReducedMotion()
+            ? 1
+            : 0.25 + 0.75 * Math.abs(Math.sin((Math.PI * nowMs) / FLAG_FLASH_PERIOD));
           ctx.globalAlpha = alpha;
-          ring(ctx, radius() + 3.5, palette.liveRed, 2);
+          // A car stopped out on the circuit is the one under the yellow flag,
+          // and flashes in the marshals' colour to say so. One that stopped in
+          // its pit box keeps the red incident ring: nothing is being neutralized
+          // for it, so borrowing the flag colour would misreport the track.
+          ring(
+            ctx, radius() + 3.5,
+            entry.causesYellowFlag ? palette.flagYellow : palette.liveRed, 2,
+          );
           ctx.globalAlpha = 1;
+          // A second, wider halo makes the car that caused the flag findable at a
+          // glance on a full grid, where one flashing ring among twenty discs is
+          // easy to miss.
+          if (entry.causesYellowFlag) {
+            ctx.globalAlpha = alpha * 0.5;
+            ring(ctx, radius() + 7.5, palette.flagYellow, 1.5);
+            ctx.globalAlpha = 1;
+          }
           break;
         }
       }
@@ -695,7 +725,7 @@ export function createTrackRenderer(
     // Asphalt width. The default suits the stylized circuit, whose legs never
     // run close together; a layout traced to real proportions needs a narrower
     // ribbon, or stretches that are genuinely adjacent merge into one road.
-    const trackWidth = (layout.circuit.trackWidth ?? 22) * ds;
+    trackWidth = (layout.circuit.trackWidth ?? 22) * ds;
     const pitWidth = trackWidth / 2;
 
     // Fixed technical grid behind the circuit.
@@ -706,9 +736,7 @@ export function createTrackRenderer(
     for (let y = 0; y <= SCENE_H; y += 24) { ctx.moveTo(-offsetX / sceneScale, y); ctx.lineTo(SCENE_W + offsetX / sceneScale, y); }
     ctx.stroke();
 
-    const circuit = new Path2D();
-    layout.line.forEach((point, index) => (index === 0 ? circuit.moveTo(point.x, point.y) : circuit.lineTo(point.x, point.y)));
-    circuit.closePath();
+    const circuit = circuitPath();
     const pitGuide = pitGuidePath();
 
     // Faint infield tint.
@@ -741,6 +769,49 @@ export function createTrackRenderer(
     drawPitLane(ctx, sync, ds);
 
     staticCanvas = off;
+  }
+
+  /** The circuit centerline as a closed path. Shared by the baked asphalt and
+   *  the live yellow-flag edge, so the two always trace the same ribbon. */
+  function circuitPath(): Path2D {
+    const path = new Path2D();
+    layout.line.forEach((point, index) => (
+      index === 0 ? path.moveTo(point.x, point.y) : path.lineTo(point.x, point.y)
+    ));
+    path.closePath();
+    return path;
+  }
+
+  /** Flashing yellow track limits, drawn over the baked asphalt while the
+   *  marshals have the yellow flag out.
+   *
+   *  Only the edge is repainted, not the asphalt: the surface stays dark, so the
+   *  car markers keep the contrast they were designed against and the track
+   *  still reads as a track. It has to be a live-layer draw rather than part of
+   *  the cached static canvas, because that canvas is rebuilt only when the
+   *  circuit or the team list changes — never per frame. */
+  function drawYellowFlagEdge(ctx: CanvasRenderingContext2D, nowMs: number): void {
+    // Same 0.8 s loop as the blocked marker ring, so the whole yellow-flag
+    // treatment pulses as one thing. A viewer who asked for reduced motion gets
+    // the edge held at full strength: the flag is safety information, so it is
+    // the flashing that is dropped, not the signal.
+    const alpha = prefersReducedMotion()
+      ? 1
+      : 0.3 + 0.7 * Math.abs(Math.sin((Math.PI * nowMs) / FLAG_FLASH_PERIOD));
+    const path = circuitPath();
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    // A soft outer bloom under a hard edge: the glow carries at a glance across
+    // the whole circuit, the crisp line keeps the track limits legible.
+    ctx.globalAlpha = alpha * 0.45;
+    ctx.strokeStyle = palette.flagYellow;
+    ctx.lineWidth = trackWidth + 10;
+    ctx.stroke(path);
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = 3;
+    ctx.stroke(path);
+    ctx.restore();
   }
 
   /** Asphalt of the pit lane itself: a curve off the circuit at pit entry, a
@@ -948,6 +1019,12 @@ export function createTrackRenderer(
 function isPitPlacement(entry: EntryPresentation): boolean {
   const kind = entry.placement.kind;
   return kind === 'pit' || kind === 'incidentPit' || kind === 'nextGrid';
+}
+
+/** Whether the viewer has asked for reduced motion. Queried per frame rather
+ *  than cached, so toggling the OS setting takes effect without a reload. */
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
 function ring(ctx: CanvasRenderingContext2D, radius: number, color: string, width: number): void {
