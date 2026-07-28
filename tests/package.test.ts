@@ -26,8 +26,12 @@ describe('npm package', () => {
   });
   it('ships a prebuilt Herdr plugin manifest with lifecycle actions', () => {
     const root = new URL('../', import.meta.url);
+    const pkg = JSON.parse(fs.readFileSync(new URL('package.json', root), 'utf8')) as {
+      version: string;
+    };
     const manifest = fs.readFileSync(new URL('herdr-plugin.toml', root), 'utf8');
     expect(manifest).toContain('id = "dev.minung.herdr-f1"');
+    expect(manifest).toContain(`version = "${pkg.version}"`);
     expect(manifest).toContain('min_herdr_version = "0.7.4"');
     expect(manifest).toContain('platforms = ["macos", "linux"]');
     expect(manifest).not.toContain('[[build]]');
