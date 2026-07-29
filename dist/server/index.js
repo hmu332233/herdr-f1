@@ -1,12 +1,12 @@
 import { createRequire as __WEBPACK_EXTERNAL_createRequire } from "module";
 /******/ var __webpack_modules__ = ({
 
-/***/ 397:
+/***/ 803:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
-const { EMPTY_BUFFER } = __nccwpck_require__(41);
+const { EMPTY_BUFFER } = __nccwpck_require__(791);
 
 const FastBuffer = Buffer[Symbol.species];
 
@@ -120,7 +120,7 @@ module.exports = {
 /* istanbul ignore else  */
 if (!process.env.WS_NO_BUFFER_UTIL) {
   try {
-    const bufferUtil = __nccwpck_require__(71);
+    const bufferUtil = __nccwpck_require__(327);
 
     module.exports.mask = function (source, mask, output, offset, length) {
       if (length < 48) _mask(source, mask, output, offset, length);
@@ -139,7 +139,7 @@ if (!process.env.WS_NO_BUFFER_UTIL) {
 
 /***/ }),
 
-/***/ 41:
+/***/ 791:
 /***/ ((module) => {
 
 
@@ -165,12 +165,12 @@ module.exports = {
 
 /***/ }),
 
-/***/ 8:
+/***/ 634:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
-const { kForOnEventAttribute, kListener } = __nccwpck_require__(41);
+const { kForOnEventAttribute, kListener } = __nccwpck_require__(791);
 
 const kCode = Symbol('kCode');
 const kData = Symbol('kData');
@@ -464,12 +464,12 @@ function callListener(listener, thisArg, event) {
 
 /***/ }),
 
-/***/ 505:
+/***/ 335:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
-const { tokenChars } = __nccwpck_require__(65);
+const { tokenChars } = __nccwpck_require__(615);
 
 /**
  * Adds an offer to the map of extension offers or a parameter to the map of
@@ -674,7 +674,7 @@ module.exports = { format, parse };
 
 /***/ }),
 
-/***/ 132:
+/***/ 958:
 /***/ ((module) => {
 
 
@@ -736,16 +736,16 @@ module.exports = Limiter;
 
 /***/ }),
 
-/***/ 234:
+/***/ 376:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
 const zlib = __nccwpck_require__(106);
 
-const bufferUtil = __nccwpck_require__(397);
-const Limiter = __nccwpck_require__(132);
-const { kStatusCode } = __nccwpck_require__(41);
+const bufferUtil = __nccwpck_require__(803);
+const Limiter = __nccwpck_require__(958);
+const { kStatusCode } = __nccwpck_require__(791);
 
 const FastBuffer = Buffer[Symbol.species];
 const TRAILER = Buffer.from([0x00, 0x00, 0xff, 0xff]);
@@ -1271,22 +1271,22 @@ function inflateOnError(err) {
 
 /***/ }),
 
-/***/ 531:
+/***/ 893:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
 const { Writable } = __nccwpck_require__(203);
 
-const PerMessageDeflate = __nccwpck_require__(234);
+const PerMessageDeflate = __nccwpck_require__(376);
 const {
   BINARY_TYPES,
   EMPTY_BUFFER,
   kStatusCode,
   kWebSocket
-} = __nccwpck_require__(41);
-const { concat, toArrayBuffer, unmask } = __nccwpck_require__(397);
-const { isValidStatusCode, isValidUTF8 } = __nccwpck_require__(65);
+} = __nccwpck_require__(791);
+const { concat, toArrayBuffer, unmask } = __nccwpck_require__(803);
+const { isValidStatusCode, isValidUTF8 } = __nccwpck_require__(615);
 
 const FastBuffer = Buffer[Symbol.species];
 
@@ -2021,7 +2021,7 @@ module.exports = Receiver;
 
 /***/ }),
 
-/***/ 703:
+/***/ 389:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 /* eslint no-unused-vars: ["error", { "varsIgnorePattern": "^Duplex" }] */
@@ -2034,10 +2034,10 @@ const {
   types: { isUint8Array }
 } = __nccwpck_require__(23);
 
-const PerMessageDeflate = __nccwpck_require__(234);
-const { EMPTY_BUFFER, kWebSocket, NOOP } = __nccwpck_require__(41);
-const { isBlob, isValidStatusCode } = __nccwpck_require__(65);
-const { mask: applyMask, toBuffer } = __nccwpck_require__(397);
+const PerMessageDeflate = __nccwpck_require__(376);
+const { EMPTY_BUFFER, kWebSocket, NOOP } = __nccwpck_require__(791);
+const { isBlob, isValidStatusCode } = __nccwpck_require__(615);
+const { mask: applyMask, toBuffer } = __nccwpck_require__(803);
 
 const kByteLength = Symbol('kByteLength');
 const maskBuffer = Buffer.alloc(4);
@@ -2635,13 +2635,13 @@ function onError(sender, err, cb) {
 
 /***/ }),
 
-/***/ 18:
+/***/ 412:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 /* eslint no-unused-vars: ["error", { "varsIgnorePattern": "^WebSocket$" }] */
 
 
-const WebSocket = __nccwpck_require__(643);
+const WebSocket = __nccwpck_require__(681);
 const { Duplex } = __nccwpck_require__(203);
 
 /**
@@ -2803,12 +2803,12 @@ module.exports = createWebSocketStream;
 
 /***/ }),
 
-/***/ 706:
+/***/ 332:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
-const { tokenChars } = __nccwpck_require__(65);
+const { tokenChars } = __nccwpck_require__(615);
 
 /**
  * Parses the `Sec-WebSocket-Protocol` header into a set of subprotocol names.
@@ -2872,14 +2872,14 @@ module.exports = { parse };
 
 /***/ }),
 
-/***/ 65:
+/***/ 615:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
 
 const { isUtf8 } = __nccwpck_require__(181);
 
-const { hasBlob } = __nccwpck_require__(41);
+const { hasBlob } = __nccwpck_require__(791);
 
 //
 // Allowed token characters:
@@ -3018,7 +3018,7 @@ if (isUtf8) {
   };
 } /* istanbul ignore else  */ else if (!process.env.WS_NO_UTF_8_VALIDATE) {
   try {
-    const isValidUTF8 = __nccwpck_require__(894);
+    const isValidUTF8 = __nccwpck_require__(414);
 
     module.exports.isValidUTF8 = function (buf) {
       return buf.length < 32 ? _isValidUTF8(buf) : isValidUTF8(buf);
@@ -3031,7 +3031,7 @@ if (isUtf8) {
 
 /***/ }),
 
-/***/ 943:
+/***/ 129:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 /* eslint no-unused-vars: ["error", { "varsIgnorePattern": "^Duplex$", "caughtErrors": "none" }] */
@@ -3043,11 +3043,11 @@ const http = __nccwpck_require__(611);
 const { Duplex } = __nccwpck_require__(203);
 const { createHash } = __nccwpck_require__(982);
 
-const extension = __nccwpck_require__(505);
-const PerMessageDeflate = __nccwpck_require__(234);
-const subprotocol = __nccwpck_require__(706);
-const WebSocket = __nccwpck_require__(643);
-const { CLOSE_TIMEOUT, GUID, kWebSocket } = __nccwpck_require__(41);
+const extension = __nccwpck_require__(335);
+const PerMessageDeflate = __nccwpck_require__(376);
+const subprotocol = __nccwpck_require__(332);
+const WebSocket = __nccwpck_require__(681);
+const { CLOSE_TIMEOUT, GUID, kWebSocket } = __nccwpck_require__(791);
 
 const keyRegex = /^[+/0-9A-Za-z]{22}==$/;
 
@@ -3600,7 +3600,7 @@ function abortHandshakeOrEmitwsClientError(
 
 /***/ }),
 
-/***/ 643:
+/***/ 681:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 /* eslint no-unused-vars: ["error", { "varsIgnorePattern": "^Duplex|Readable$", "caughtErrors": "none" }] */
@@ -3616,10 +3616,10 @@ const { randomBytes, createHash } = __nccwpck_require__(982);
 const { Duplex, Readable } = __nccwpck_require__(203);
 const { URL } = __nccwpck_require__(16);
 
-const PerMessageDeflate = __nccwpck_require__(234);
-const Receiver = __nccwpck_require__(531);
-const Sender = __nccwpck_require__(703);
-const { isBlob } = __nccwpck_require__(65);
+const PerMessageDeflate = __nccwpck_require__(376);
+const Receiver = __nccwpck_require__(893);
+const Sender = __nccwpck_require__(389);
+const { isBlob } = __nccwpck_require__(615);
 
 const {
   BINARY_TYPES,
@@ -3631,12 +3631,12 @@ const {
   kStatusCode,
   kWebSocket,
   NOOP
-} = __nccwpck_require__(41);
+} = __nccwpck_require__(791);
 const {
   EventTarget: { addEventListener, removeEventListener }
-} = __nccwpck_require__(8);
-const { format, parse } = __nccwpck_require__(505);
-const { toBuffer } = __nccwpck_require__(397);
+} = __nccwpck_require__(634);
+const { format, parse } = __nccwpck_require__(335);
+const { toBuffer } = __nccwpck_require__(803);
 
 const kAborted = Symbol('kAborted');
 const protocolVersions = [8, 13];
@@ -5014,7 +5014,7 @@ function socketOnError() {
 
 /***/ }),
 
-/***/ 71:
+/***/ 327:
 /***/ ((module) => {
 
 module.exports = eval("require")("bufferutil");
@@ -5022,7 +5022,7 @@ module.exports = eval("require")("bufferutil");
 
 /***/ }),
 
-/***/ 894:
+/***/ 414:
 /***/ ((module) => {
 
 module.exports = eval("require")("utf-8-validate");
@@ -6507,23 +6507,23 @@ function compareOrderKeys(a, b) {
 ;// CONCATENATED MODULE: external "node:http"
 const external_node_http_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:http");
 var external_node_http_default = /*#__PURE__*/__nccwpck_require__.n(external_node_http_namespaceObject);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/stream.js
-var stream = __nccwpck_require__(18);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/extension.js
-var extension = __nccwpck_require__(505);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/permessage-deflate.js
-var permessage_deflate = __nccwpck_require__(234);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/receiver.js
-var receiver = __nccwpck_require__(531);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/sender.js
-var sender = __nccwpck_require__(703);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/subprotocol.js
-var subprotocol = __nccwpck_require__(706);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/websocket.js
-var websocket = __nccwpck_require__(643);
-// EXTERNAL MODULE: ../../../node_modules/ws/lib/websocket-server.js
-var websocket_server = __nccwpck_require__(943);
-;// CONCATENATED MODULE: ../../../node_modules/ws/wrapper.mjs
+// EXTERNAL MODULE: ./node_modules/ws/lib/stream.js
+var stream = __nccwpck_require__(412);
+// EXTERNAL MODULE: ./node_modules/ws/lib/extension.js
+var extension = __nccwpck_require__(335);
+// EXTERNAL MODULE: ./node_modules/ws/lib/permessage-deflate.js
+var permessage_deflate = __nccwpck_require__(376);
+// EXTERNAL MODULE: ./node_modules/ws/lib/receiver.js
+var receiver = __nccwpck_require__(893);
+// EXTERNAL MODULE: ./node_modules/ws/lib/sender.js
+var sender = __nccwpck_require__(389);
+// EXTERNAL MODULE: ./node_modules/ws/lib/subprotocol.js
+var subprotocol = __nccwpck_require__(332);
+// EXTERNAL MODULE: ./node_modules/ws/lib/websocket.js
+var websocket = __nccwpck_require__(681);
+// EXTERNAL MODULE: ./node_modules/ws/lib/websocket-server.js
+var websocket_server = __nccwpck_require__(129);
+;// CONCATENATED MODULE: ./node_modules/ws/wrapper.mjs
 
 
 
