@@ -161,11 +161,15 @@ function createAgentRow(
     status.style.background = hexAlpha(statusColor, 0.14);
     stint.textContent = entry.showsNewStint ? 'NEW STINT' : '';
     element.classList.toggle('is-onboard', entry.isFocused);
+    // Flashes in step with the track and this car's marker: the row is how a
+    // viewer gets from "something is yellow" to which agent needs them.
+    element.classList.toggle('is-yellow-flag', entry.causesYellowFlag);
     onboard.hidden = !entry.isFocused;
     element.setAttribute(
       'aria-label',
       `Car ${entry.carNumber}, ${entry.workspaceLabel}, ${entry.tabLabel}, ${entry.agentKind}, ` +
-        `${entry.statusText.toLowerCase()}, Focus in Herdr`,
+        `${entry.statusText.toLowerCase()}, ` +
+        `${entry.causesYellowFlag ? 'yellow flag, ' : ''}Focus in Herdr`,
     );
   }
 
