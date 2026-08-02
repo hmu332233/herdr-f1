@@ -11,6 +11,9 @@ export function createChrome() {
   const carCount = document.getElementById('car-count')!;
   const overlay = document.getElementById('overlay')!;
   const standingsEmpty = document.getElementById('standings-empty')!;
+  const flag = document.getElementById('flag-pill')!;
+  const flagCount = document.getElementById('flag-count')!;
+  const trackWrap = document.getElementById('track-wrap')!;
 
   function render(sync: SyncMessage): void {
     // Race distance comes from the server, which owns the race: it is told the
@@ -27,6 +30,7 @@ export function createChrome() {
     connection.textContent = badge.text;
     connection.style.color = badge.color;
 
+    renderFlag(sync);
     renderOverlay(sync, entryCount);
 
     standingsEmpty.hidden = sync.teams.length > 0;
@@ -34,6 +38,28 @@ export function createChrome() {
       standingsEmpty.textContent =
         sync.overlay.kind === 'noCarsOnGrid' ? 'NO CARS ON GRID' : 'FORMATION LAP · AWAITING GRID';
     }
+  }
+
+  /** YELLOW FLAG pill, and the class that flashes the canvas border.
+   *
+   *  The count is shown as a bare `×n` and only for a multi-car incident: the
+   *  header is a single fixed-height line shared with the lap, Grand Prix and
+   *  telemetry labels, and spelling out "1 CAR STOPPED" pushes the row into an
+   *  overflow. One stopped car is already identifiable from its flashing marker
+   *  and standings row, so the number only earns space once there are several. */
+  function renderFlag(sync: SyncMessage): void {
+    const isYellow = sync.flag.kind === 'yellow';
+    flag.hidden = !isYellow;
+    trackWrap.classList.toggle('is-yellow-flag', isYellow);
+    if (sync.flag.kind !== 'yellow') return;
+    const count = sync.flag.terminalIDs.length;
+    flagCount.textContent = count > 1 ? `×${count}` : '';
+    // The visible pill drops the wording to fit; the label keeps it, so the
+    // announcement a screen reader makes is still a full sentence.
+    flag.setAttribute(
+      'aria-label',
+      `Yellow flag, ${count} car${count === 1 ? '' : 's'} stopped on track`,
+    );
   }
 
   function renderOverlay(sync: SyncMessage, entryCount: number): void {

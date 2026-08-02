@@ -12,6 +12,9 @@ export const palette = {
   statusPit: '#4DA6FF',
   statusDone: '#E0E0E0',
   statusBlocked: '#FF9F0A',
+  /** Marshal's yellow. Brighter and less orange than statusBlocked so a flashing
+   *  track edge reads as a track condition rather than as another status chip. */
+  flagYellow: '#FFD400',
   /** Constructor liveries, one per palette slot. A team is assigned a slot from
    *  a stable hash of its workspace ID (see race-session.assignTeamTokens), so
    *  the colour looks arbitrary but never moves between syncs.

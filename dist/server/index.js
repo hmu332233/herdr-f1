@@ -5266,6 +5266,12 @@ const RaceRules = {
     newEntrantDeficit: 0.15,
     /** How long the transient NEW STINT treatment stays visible (race seconds). */
     newStintDuration: 4.0,
+    /** Pace of the still-running cars while the yellow flag is out, relative to
+     *  nominal. A stopped car brings out the safety car, so the rest of the field
+     *  slows and holds position instead of racing past the incident. Scoring is
+     *  genuinely slowed — not just the animation — so the standings a viewer reads
+     *  match the motion they watched. */
+    safetyCarFactor: 0.4,
     /** Number of distinct constructor liveries available. Must match the length
      *  of palette.teamColors on the client: slots are handed out against this
      *  count, and teams beyond it fall back to pattern outlines. */
@@ -5906,6 +5912,10 @@ wallClock = () => new Date()) {
         }
     }
     function scoreLive(elapsed) {
+        // Sampled once for the whole step: the probe pass below and the commit pass
+        // that follows must score against the same track condition, or a car could
+        // be found to finish at a pace it is then not advanced at.
+        const paceFactor = fieldPaceFactor();
         // The first individual to reach the finish ends the race, so everyone only
         // advances up to the earliest finish instant within this step.
         let earliestFinish = elapsed;
@@ -5915,7 +5925,7 @@ wallClock = () => new Date()) {
                 continue;
             const official = { value: entry.official };
             const pace = { ...entry.pace };
-            const unused = walk(official, pace, entry.terminalID, elapsed);
+            const unused = walk(official, pace, entry.terminalID, elapsed, paceFactor);
             if (official.value >= totalLaps) {
                 const finishTime = elapsed - unused;
                 if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
@@ -5932,12 +5942,13 @@ wallClock = () => new Date()) {
         for (const entry of entries.values()) {
             if (isDriving(entry)) {
                 const official = { value: entry.official };
-                walk(official, entry.pace, entry.terminalID, budget);
+                walk(official, entry.pace, entry.terminalID, budget, paceFactor);
                 entry.display += official.value - entry.official;
                 entry.official = official.value;
             }
             else if (entry.status === 'done' && !entry.isRetired) {
-                entry.display += budget * RaceRules.baseSpeed * RaceRules.doneCooldownFactor;
+                entry.display +=
+                    budget * RaceRules.baseSpeed * RaceRules.doneCooldownFactor * paceFactor;
             }
         }
         if (finisher !== null)
@@ -5946,10 +5957,43 @@ wallClock = () => new Date()) {
     function isDriving(entry) {
         return entry.status === 'working' && !entry.isRetired && !entry.isQueuedNextGrid;
     }
+    /** A car stopped on the circuit: blocked, but still in this race and not
+     *  parked in the pit lane. This is the whole yellow-flag condition — an agent
+     *  that blocked while idle is in its pit box, which needs no marshals.
+     *
+     *  Retired and next-grid cars are excluded because they are not on the
+     *  circuit at all; a race would otherwise stay permanently yellow for a
+     *  terminal that has already gone away. */
+    function causesYellowFlag(entry) {
+        return entry.status === 'blocked'
+            && !entry.isRetired
+            && !entry.isQueuedNextGrid
+            && !entry.incidentInPit;
+    }
+    /** True while any car is stopped on the circuit. Read once per scoring step
+     *  and once per presentation, so the pace the field runs at and the flag the
+     *  dashboard shows always come from the same condition. */
+    function isYellowFlag() {
+        for (const entry of entries.values()) {
+            if (causesYellowFlag(entry))
+                return true;
+        }
+        return false;
+    }
+    /** Speed scale applied to every running car. The safety car neutralizes the
+     *  race: the field slows, but nobody stops and gaps are preserved, since one
+     *  factor applied to everyone leaves the relative order untouched. */
+    function fieldPaceFactor() {
+        return isYellowFlag() ? RaceRules.safetyCarFactor : 1;
+    }
     /** Advances `official.value` by up to `budget` seconds, resampling pace at
      *  each official lap boundary and stopping exactly at the finish.
-     *  Returns the unused part of the budget (non-zero only at the finish). */
-    function walk(official, pace, terminalID, budget) {
+     *  Returns the unused part of the budget (non-zero only at the finish).
+     *
+     *  `paceFactor` neutralizes the field behind the safety car. It scales the
+     *  speed rather than the budget so the lap-boundary walk stays exact: pace is
+     *  still resampled per official lap, and the finish is still hit dead on. */
+    function walk(official, pace, terminalID, budget, paceFactor) {
         const finish = totalLaps;
         let remaining = budget;
         while (remaining > 1e-12 && official.value < finish) {
@@ -5958,7 +6002,7 @@ wallClock = () => new Date()) {
                 pace.multiplier = clampPace(paceSource(grandPrix, terminalID, lap));
                 pace.lap = lap;
             }
-            const speed = RaceRules.baseSpeed * pace.multiplier;
+            const speed = RaceRules.baseSpeed * pace.multiplier * paceFactor;
             const boundary = Math.min(lap + 1, finish);
             const timeToBoundary = (boundary - official.value) / speed;
             // The epsilon snaps float-accumulated distance onto exact lap
@@ -6251,8 +6295,19 @@ wallClock = () => new Date()) {
             podium: frozenPodium,
             connection: connection,
             overlay: currentOverlay,
+            flag: flag(teams),
             radio: [...radio],
         };
+    }
+    /** Track condition, read off the entries already presented so the flag and
+     *  the cars flagged can never disagree. Standings order carries through,
+     *  which makes the list stable between syncs. */
+    function flag(teams) {
+        const terminalIDs = teams
+            .flatMap(team => team.entries)
+            .filter(entry => entry.causesYellowFlag)
+            .map(entry => entry.id);
+        return terminalIDs.length === 0 ? { kind: 'green' } : { kind: 'yellow', terminalIDs };
     }
     function headerLap() {
         let leader = 0;
@@ -6263,6 +6318,9 @@ wallClock = () => new Date()) {
         return Math.min(totalLaps, Math.floor(leader) + 1);
     }
     function rankedTeams() {
+        // One condition for the whole presentation: every entry reports the display
+        // speed it is actually being scored at.
+        const paceFactor = fieldPaceFactor();
         // A workspace whose every entry has retired leaves the standings (and the
         // podium) entirely. The entries themselves stay in the session, so a
         // terminal reappearing before race end restores the team with its
@@ -6300,10 +6358,10 @@ wallClock = () => new Date()) {
                 .sort((a, b) => quantized(b.official) - quantized(a.official) ||
                 a.carNumber - b.carNumber ||
                 compareStrings(a.terminalID, b.terminalID))
-                .map(entry => present(entry)),
+                .map(entry => present(entry, paceFactor)),
         }));
     }
-    function present(entry) {
+    function present(entry, paceFactor) {
         const lap = lapOf(entry, totalLaps);
         const progress = entry.display - Math.floor(entry.display);
         let placement;
@@ -6349,24 +6407,28 @@ wallClock = () => new Date()) {
             lap,
             statusText,
             placement,
-            displaySpeed: displaySpeed(entry),
+            displaySpeed: displaySpeed(entry, paceFactor),
             isFocused: entry.isFocused,
             showsNewStint: entry.newStintUntil !== null && raceTime < entry.newStintUntil,
+            causesYellowFlag: causesYellowFlag(entry),
         };
     }
     /** Display motion in laps/second the client uses to extrapolate between
      *  syncs. Mirrors the motion the server itself applies in step(). */
-    function displaySpeed(entry) {
+    function displaySpeed(entry, paceFactor) {
         if (connection.kind !== 'live')
             return 0;
         if (entry.isRetired || entry.isQueuedNextGrid)
             return 0;
         if (phase === 'live') {
             if (entry.status === 'working') {
-                return RaceRules.baseSpeed * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier);
+                return RaceRules.baseSpeed
+                    * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
+                    * paceFactor;
             }
-            if (entry.status === 'done')
-                return RaceRules.baseSpeed * RaceRules.doneCooldownFactor;
+            if (entry.status === 'done') {
+                return RaceRules.baseSpeed * RaceRules.doneCooldownFactor * paceFactor;
+            }
             return 0;
         }
         if (phase === 'podium' && (entry.status === 'working' || entry.status === 'done')) {
