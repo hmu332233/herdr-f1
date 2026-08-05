@@ -5314,7 +5314,7 @@ function loadFixture(name, session) {
             connectionFixture(session, { kind: 'offline' });
             break;
         case 'error':
-            connectionFixture(session, { kind: 'protocolError', detail: 'Unsupported Herdr protocol 999' });
+            connectionFixture(session, { kind: 'protocolError', detail: 'Invalid Herdr response: malformed snapshot' });
             break;
         case 'podium':
             podium(session);
@@ -5412,12 +5412,16 @@ const external_node_readline_namespaceObject = __WEBPACK_EXTERNAL_createRequire(
 ;// CONCATENATED MODULE: external "node:timers/promises"
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:timers/promises");
 ;// CONCATENATED MODULE: ./src/server/herdr/projector.ts
-// herdr 0.7.5 ships protocol 17; the snapshot shape (workspaces/tabs/panes/
-// agents with object agent_session) is unchanged from 16, so both are accepted.
-const SUPPORTED_PROTOCOL = 17;
+// herdr 0.8.0 ships protocol 19; the snapshot fields the projector reads
+// (workspaces/tabs/agents with object agent_session) are unchanged since 16.
+const SUPPORTED_PROTOCOL = 19;
 /** Any malformed, unsupported, or server-reported protocol problem. */
 class HerdrProtocolFault extends Error {
 }
+/** Protocols newer than SUPPORTED_PROTOCOL are projected anyway — every field
+ *  read is already defensive — but each one is announced once on the server
+ *  terminal so odd telemetry is traceable to the version gap. */
+const warnedProtocols = new Set();
 const STATUSES = new Set(['idle', 'working', 'done', 'blocked']);
 /** Unwraps a session.snapshot response envelope and projects it. */
 function decodeSnapshotResponse(envelope) {
@@ -5436,8 +5440,13 @@ function projectSnapshot(snapshot) {
         !Array.isArray(raw.workspaces) || !Array.isArray(raw.agents)) {
         throw new HerdrProtocolFault('Invalid Herdr response: malformed snapshot');
     }
-    if (typeof raw.protocol !== 'number' || raw.protocol > SUPPORTED_PROTOCOL) {
+    if (typeof raw.protocol !== 'number') {
         throw new HerdrProtocolFault(`Unsupported Herdr protocol ${String(raw.protocol)}`);
+    }
+    if (raw.protocol > SUPPORTED_PROTOCOL && !warnedProtocols.has(raw.protocol)) {
+        warnedProtocols.add(raw.protocol);
+        console.warn(`Herdr speaks protocol ${raw.protocol}, newer than the supported ${SUPPORTED_PROTOCOL}. ` +
+            'Continuing anyway; update Herdr F1 if telemetry looks wrong.');
     }
     const tabs = new Map();
     for (const tab of (Array.isArray(raw.tabs) ? raw.tabs : [])) {
@@ -5528,7 +5537,7 @@ const BROADCAST_SUBSCRIPTIONS = [
 ];
 /** Every subscribed event invalidates the snapshot. `pane.updated` is
  *  deliberately omitted: it fires on terminal-title churn and would amount to
- *  output polling. Canonical names use underscores; protocol 17 dot names are
+ *  output polling. Canonical names use underscores; protocol 17+ dot names are
  *  normalized at the event boundary and legacy underscore names still work. */
 const INVALIDATION_EVENTS = new Set([
     ...BROADCAST_SUBSCRIPTIONS.map(canonicalEventName),

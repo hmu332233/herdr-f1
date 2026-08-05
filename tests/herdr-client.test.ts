@@ -85,13 +85,14 @@ describe('HerdrClient', () => {
   });
 
   it('surfaces protocol problems as protocolError', async () => {
-    fake = await FakeHerdr.start(rawSnapshot([], { protocol: 999 }));
+    // A newer numeric protocol only warns; a snapshot without one is a fault.
+    fake = await FakeHerdr.start(rawSnapshot([], { protocol: undefined }));
     const c = collector();
     makeClient(fake.socketPath).start(c.push);
     await waitUntil(() => c.updates.some(u => u.kind === 'connection' && u.state.kind === 'protocolError'));
     const fault = c.updates.find(u => u.kind === 'connection' && u.state.kind === 'protocolError');
     if (fault?.kind !== 'connection' || fault.state.kind !== 'protocolError') throw new Error('unreachable');
-    expect(fault.state.detail).toContain('Unsupported Herdr protocol 999');
+    expect(fault.state.detail).toContain('Unsupported Herdr protocol undefined');
   });
 
   it('surfaces server error responses as protocolError', async () => {

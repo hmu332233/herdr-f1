@@ -18,7 +18,7 @@ export const BROADCAST_SUBSCRIPTIONS: readonly string[] = [
 
 /** Every subscribed event invalidates the snapshot. `pane.updated` is
  *  deliberately omitted: it fires on terminal-title churn and would amount to
- *  output polling. Canonical names use underscores; protocol 17 dot names are
+ *  output polling. Canonical names use underscores; protocol 17+ dot names are
  *  normalized at the event boundary and legacy underscore names still work. */
 export const INVALIDATION_EVENTS: ReadonlySet<string> = new Set([
   ...BROADCAST_SUBSCRIPTIONS.map(canonicalEventName),

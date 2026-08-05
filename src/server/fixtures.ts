@@ -12,7 +12,7 @@ export function loadFixture(name: string, session: RaceSession): void {
     case 'dense': dense(session); break;
     case 'redflag': connectionFixture(session, { kind: 'offline' }); break;
     case 'error':
-      connectionFixture(session, { kind: 'protocolError', detail: 'Unsupported Herdr protocol 999' });
+      connectionFixture(session, { kind: 'protocolError', detail: 'Invalid Herdr response: malformed snapshot' });
       break;
     case 'podium': podium(session); break;
     default: grid(session);

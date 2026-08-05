@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { decodeSnapshotResponse, projectSnapshot } from '../src/server/herdr/projector.js';
 
 /** Raw herdr wire shapes (snake_case) as session.snapshot returns them. */
@@ -76,9 +76,24 @@ describe('projectSnapshot', () => {
     expect(snapshot.teams.find(team => team.id === 'ws-empty')).toBeUndefined();
   });
 
-  it('rejects unsupported protocol versions', () => {
-    expect(() => projectSnapshot(rawSnapshot({ protocol: 999 })))
-      .toThrowError(/Unsupported Herdr protocol 999/);
+  it('warns once on the terminal and continues on newer protocols', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const snapshot = projectSnapshot(rawSnapshot({ protocol: 999 }));
+      expect(snapshot.teams).toHaveLength(2);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(warn.mock.calls[0][0]).toContain('protocol 999');
+      // The warning is per protocol version, not per snapshot refresh.
+      projectSnapshot(rawSnapshot({ protocol: 999 }));
+      expect(warn).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('rejects a missing protocol number', () => {
+    expect(() => projectSnapshot(rawSnapshot({ protocol: undefined })))
+      .toThrowError(/Unsupported Herdr protocol undefined/);
   });
 
   it('rejects malformed snapshots', () => {

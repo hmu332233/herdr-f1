@@ -1,12 +1,17 @@
 import type { AgentStatus } from '../../shared/presentation.js';
 import type { SourceAgent, SourceSnapshot, SourceTeam } from './types.js';
 
-// herdr 0.7.5 ships protocol 17; the snapshot shape (workspaces/tabs/panes/
-// agents with object agent_session) is unchanged from 16, so both are accepted.
-export const SUPPORTED_PROTOCOL = 17;
+// herdr 0.8.0 ships protocol 19; the snapshot fields the projector reads
+// (workspaces/tabs/agents with object agent_session) are unchanged since 16.
+export const SUPPORTED_PROTOCOL = 19;
 
 /** Any malformed, unsupported, or server-reported protocol problem. */
 export class HerdrProtocolFault extends Error {}
+
+/** Protocols newer than SUPPORTED_PROTOCOL are projected anyway — every field
+ *  read is already defensive — but each one is announced once on the server
+ *  terminal so odd telemetry is traceable to the version gap. */
+const warnedProtocols = new Set<number>();
 
 const STATUSES: ReadonlySet<string> = new Set(['idle', 'working', 'done', 'blocked']);
 
@@ -38,8 +43,15 @@ export function projectSnapshot(snapshot: unknown): SourceSnapshot {
   ) {
     throw new HerdrProtocolFault('Invalid Herdr response: malformed snapshot');
   }
-  if (typeof raw.protocol !== 'number' || raw.protocol > SUPPORTED_PROTOCOL) {
+  if (typeof raw.protocol !== 'number') {
     throw new HerdrProtocolFault(`Unsupported Herdr protocol ${String(raw.protocol)}`);
+  }
+  if (raw.protocol > SUPPORTED_PROTOCOL && !warnedProtocols.has(raw.protocol)) {
+    warnedProtocols.add(raw.protocol);
+    console.warn(
+      `Herdr speaks protocol ${raw.protocol}, newer than the supported ${SUPPORTED_PROTOCOL}. ` +
+      'Continuing anyway; update Herdr F1 if telemetry looks wrong.',
+    );
   }
 
   const tabs = new Map<string, { label?: string | null; title?: string | null; name?: string | null }>();

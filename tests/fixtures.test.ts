@@ -52,7 +52,7 @@ describe('fixtures', () => {
     loadFixture('error', session);
     expect(session.presentation().overlay).toEqual({
       kind: 'suspended',
-      detail: 'Unsupported Herdr protocol 999',
+      detail: 'Invalid Herdr response: malformed snapshot',
     });
   });
 
