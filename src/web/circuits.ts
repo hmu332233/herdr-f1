@@ -13,6 +13,8 @@
  *  circuit instead names the control-point indices its pit lane runs beside.
  */
 
+import { venueLaps } from '../shared/venues.js';
+
 export interface CircuitDefinition {
   id: string;
   /** Shown in the selector. */
@@ -40,10 +42,9 @@ export interface CircuitDefinition {
    *  the layout from an authoring mistake, which would otherwise look identical
    *  to a geometry check. */
   crossovers?: number;
-  /** Race distance shown in the header, in laps. The race itself still runs to
-   *  RaceRules.totalLaps — that lives on the server, which knows nothing about
-   *  the viewer's circuit choice — so this is the published distance for the
-   *  venue rather than a change to scoring. */
+  /** Published race distance for the venue, in laps. Sourced from the shared
+   *  venues module so the server (which owns the race and validates
+   *  `host --circuit`) and this drawing can never disagree about it. */
   laps: number;
   /** Suppresses the PIT ENTRY / PIT EXIT captions. Set it where the pit
    *  straight is short and steep enough that the two junctions crowd a corner
@@ -72,7 +73,7 @@ const HERDR: CircuitDefinition = {
   id: 'herdr',
   name: 'HERDR CIRCUIT',
   flag: '🏁',
-  laps: 58,
+  laps: venueLaps('herdr'),
   points: [
     // Long start/finish straight feeding a decisive right-side climb.
     [0.58, 0.10], [0.72, 0.10], [0.78, 0.16],
@@ -113,7 +114,7 @@ const SUZUKA: CircuitDefinition = {
   id: 'suzuka',
   name: 'SUZUKA',
   flag: '🇯🇵',
-  laps: 53,
+  laps: venueLaps('suzuka'),
   points: [
     // Main straight past the pits, into the opening right-hander.
     [0.622, 0.965], [0.922, 0.957], [0.949, 0.926], [0.965, 0.857],
@@ -170,7 +171,7 @@ const KOREA: CircuitDefinition = {
   id: 'korea',
   name: 'KOREA INTERNATIONAL',
   flag: '🇰🇷',
-  laps: 55,
+  laps: venueLaps('korea'),
   points: [
     // Out of the final corner onto the long left-hand section.
     [0.248, 0.694], [0.077, 0.685], [0.043, 0.652], [0.035, 0.606],
@@ -215,7 +216,7 @@ const LAS_VEGAS: CircuitDefinition = {
   id: 'las-vegas',
   name: 'LAS VEGAS STRIP',
   flag: '🇺🇸',
-  laps: 50,
+  laps: venueLaps('las-vegas'),
   //  Point order follows the circuit's direction of travel — anticlockwise,
   //  east along the Strip then north up Harmon Avenue — as marked by the
   //  direction arrows in the source drawing. The traced edge ran the other way
@@ -275,7 +276,7 @@ const CATALUNYA: CircuitDefinition = {
   id: 'catalunya',
   name: 'BARCELONA-CATALUNYA',
   flag: '🇪🇸',
-  laps: 66,
+  laps: venueLaps('catalunya'),
   points: [
     // Main straight, running west past the pits.
     [0.784, 0.036], [0.180, 0.036],

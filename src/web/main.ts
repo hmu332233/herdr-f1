@@ -75,6 +75,20 @@ circuitSelect.addEventListener('change', () => {
   if (sync) track.frame(performance.now());
 });
 
+/** Multiplayer: the venue is pinned when the host is launched, so every viewer
+ *  watches the same circuit and the selector is locked — viewers are anonymous
+ *  and shared race state accepts no anonymous writes. Local mode syncs carry no
+ *  circuitID and the selector stays a per-browser choice. */
+function followPinnedCircuit(circuitID: string | undefined): void {
+  if (circuitID === undefined) return;
+  if (track.currentCircuitID() !== circuitID) {
+    track.setCircuit(circuitID);
+    circuitSelect.value = track.currentCircuitID();
+  }
+  circuitSelect.disabled = true;
+  circuitSelect.title = 'Circuit is set by the multiplayer host';
+}
+
 function frame(now: number): void {
   if (sync) track.frame(now);
   requestAnimationFrame(frame);
@@ -89,6 +103,7 @@ function connect(): void {
   socket.onopen = () => sendCircuitLaps(circuitSelect.value);
   socket.onmessage = event => {
     sync = JSON.parse(event.data as string) as SyncMessage;
+    followPinnedCircuit(sync.circuitID);
     chrome.render(sync);
     standings.render(sync);
     radio.render(sync);

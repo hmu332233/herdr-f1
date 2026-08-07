@@ -3,18 +3,26 @@ import { parseArgs as parseNodeArgs } from 'node:util';
 import { ensureDaemon, runDaemon, statusDaemon, stopDaemon } from './daemon.js';
 import { FIXTURE_NAMES, type FixtureName } from './fixtures.js';
 import { defaultSocketPath } from './herdr/client.js';
+import { runHost } from './multiplayer/host.js';
+import { runJoin } from './multiplayer/join.js';
+import { normalizeParticipantName } from './multiplayer/wire.js';
+import { DEFAULT_VENUE_ID, isVenueID, VENUE_IDS, type VenueID } from '../shared/venues.js';
 import { targetLabel, type InstanceTarget } from './target.js';
 
 export type CliCommand =
   | { kind: 'start'; target: InstanceTarget; port: number; open: boolean }
   | { kind: 'stop'; target: InstanceTarget }
   | { kind: 'status'; target: InstanceTarget }
-  | { kind: 'daemon'; target: InstanceTarget; port: number };
+  | { kind: 'daemon'; target: InstanceTarget; port: number }
+  | { kind: 'host'; port: number; circuit: VenueID }
+  | { kind: 'join'; host: string; port: number; name: string; socketPath: string };
 
 const USAGE = `Usage:
   herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]`;
+  herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
+  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>]
+  herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {}
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): CliCommand {
@@ -28,14 +36,40 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
         open: { type: 'boolean' },
         socket: { type: 'string' },
         fixture: { type: 'string' },
+        name: { type: 'string' },
+        circuit: { type: 'string' },
       },
     });
     const command = positionals[0] ?? 'start';
-    if (positionals.length > 1 || !['start', 'stop', 'status', '__daemon'].includes(command)) throw new UsageError(USAGE);
-    const starts = command === 'start' || command === '__daemon';
+    if (!['start', 'stop', 'status', '__daemon', 'host', 'join'].includes(command)) throw new UsageError(USAGE);
+    if (positionals.length > (command === 'join' ? 2 : 1)) throw new UsageError(USAGE);
+    if (values.name !== undefined && command !== 'join') throw new UsageError(USAGE);
+    // The venue is the host launcher's choice alone (design decision 8, revised).
+    if (values.circuit !== undefined && command !== 'host') throw new UsageError(USAGE);
+    // `join` takes its port from <host[:port]>, so --port belongs to the
+    // commands that bind a server.
+    const starts = command === 'start' || command === '__daemon' || command === 'host';
     if ((!starts && values.port !== undefined) || (command !== 'start' && values.open)) throw new UsageError(USAGE);
     const port = Number(values.port ?? 4158);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError(USAGE);
+    if (command === 'host') {
+      if (values.fixture || values.socket) throw new UsageError(USAGE);
+      const circuit = values.circuit ?? DEFAULT_VENUE_ID;
+      if (!isVenueID(circuit)) throw new UsageError(USAGE);
+      return { kind: 'host', port, circuit };
+    }
+    if (command === 'join') {
+      if (positionals.length !== 2 || values.fixture) throw new UsageError(USAGE);
+      const name = normalizeParticipantName(values.name ?? '');
+      if (name === null) throw new UsageError(USAGE);
+      const address = parseHostAddress(positionals[1]);
+      return {
+        kind: 'join',
+        ...address,
+        name,
+        socketPath: values.socket ?? env.HERDR_SOCKET_PATH ?? defaultSocketPath,
+      };
+    }
     if (values.fixture && !(FIXTURE_NAMES as readonly string[]).includes(values.fixture)) throw new UsageError(USAGE);
     if (values.fixture && values.socket) throw new UsageError(USAGE);
     const target: InstanceTarget = values.fixture
@@ -50,6 +84,22 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   }
 }
 
+/** `<host[:port]>`, defaulting to 4158. IPv6 works bracketed (`[::1]:4200`)
+ *  or bare with the default port. */
+function parseHostAddress(raw: string): { host: string; port: number } {
+  const bracketed = /^\[([^\]]+)\](?::(\d{1,5}))?$/.exec(raw);
+  if (bracketed) return validatedAddress(bracketed[1], bracketed[2]);
+  const parts = raw.split(':');
+  if (parts.length > 2) return validatedAddress(raw, undefined); // bare IPv6
+  return validatedAddress(parts[0], parts[1]);
+}
+
+function validatedAddress(host: string, portText: string | undefined): { host: string; port: number } {
+  const port = portText === undefined ? 4158 : Number(portText);
+  if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError(USAGE);
+  return { host, port };
+}
+
 export async function run(argv: string[]): Promise<void> {
   let command: CliCommand;
   try { command = parseArgs(argv); }
@@ -58,6 +108,10 @@ export async function run(argv: string[]): Promise<void> {
     throw error;
   }
   if (command.kind === 'daemon') { await runDaemon(command.target, command.port); return; }
+  // Multiplayer commands run in the foreground (design decision 9): party
+  // sessions are transient, so there is no daemon to manage.
+  if (command.kind === 'host') { await runHost(command.port, command.circuit); return; }
+  if (command.kind === 'join') { await runJoin(command); return; }
   if (command.kind === 'stop') {
     const stopped = await stopDaemon(command.target);
     console.log(stopped ? 'Herdr F1 stopped.' : 'Herdr F1 is not running.');

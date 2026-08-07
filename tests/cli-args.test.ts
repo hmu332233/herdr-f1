@@ -21,4 +21,35 @@ describe('parseArgs', () => {
       expect(() => parseArgs(argv, {})).toThrowError(/^Usage:/);
     }
   });
+  it('parses the multiplayer host command', () => {
+    expect(parseArgs(['host'], {})).toEqual({ kind: 'host', port: 4158, circuit: 'herdr' });
+    expect(parseArgs(['host', '--port', '5000'], {})).toEqual({ kind: 'host', port: 5000, circuit: 'herdr' });
+    expect(parseArgs(['host', '--circuit', 'suzuka'], {})).toEqual({ kind: 'host', port: 4158, circuit: 'suzuka' });
+  });
+  it('parses join targets, names, and socket precedence', () => {
+    expect(parseArgs(['join', '192.168.0.5', '--name', ' mark '], {})).toEqual({
+      kind: 'join', host: '192.168.0.5', port: 4158, name: 'mark', socketPath: defaultSocketPath,
+    });
+    expect(parseArgs(['join', 'party.local:4200', '--name', 'woo'], {})).toMatchObject({
+      host: 'party.local', port: 4200,
+    });
+    expect(parseArgs(['join', '[::1]:4200', '--name', 'woo'], {})).toMatchObject({ host: '::1', port: 4200 });
+    expect(parseArgs(['join', 'fe80::1', '--name', 'woo'], {})).toMatchObject({ host: 'fe80::1', port: 4158 });
+    expect(parseArgs(['join', 'h', '--name', 'woo', '--socket', '/tmp/x.sock'], { HERDR_SOCKET_PATH: '/tmp/env.sock' }))
+      .toMatchObject({ socketPath: '/tmp/x.sock' });
+    expect(parseArgs(['join', 'h', '--name', 'woo'], { HERDR_SOCKET_PATH: '/tmp/env.sock' }))
+      .toMatchObject({ socketPath: '/tmp/env.sock' });
+  });
+  it('rejects malformed multiplayer invocations', () => {
+    for (const argv of [
+      ['host', '--socket', '/tmp/a'], ['host', '--fixture', 'grid'], ['host', '--open'], ['host', '--name', 'x'],
+      ['join'], ['join', 'h'], ['join', 'h', '--name', ''], ['join', 'h', '--name', '   '],
+      ['join', 'h', '--name', 'x'.repeat(25)], ['join', 'h:99999', '--name', 'x'], ['join', 'h:', '--name', 'x'],
+      ['join', 'h', 'extra', '--name', 'x'], ['join', 'h', '--name', 'x', '--port', '4200'],
+      ['join', 'h', '--name', 'x', '--fixture', 'grid'], ['start', '--name', 'x'],
+      ['host', '--circuit', 'nope'], ['start', '--circuit', 'suzuka'], ['join', 'h', '--name', 'x', '--circuit', 'suzuka'],
+    ]) {
+      expect(() => parseArgs(argv, {}), argv.join(' ')).toThrowError(/^Usage:/);
+    }
+  });
 });

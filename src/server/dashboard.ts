@@ -9,6 +9,12 @@ import type { InstanceTarget } from './target.js';
 
 const monotonicSeconds = (): number => performance.now() / 1000;
 
+/** The built web bundle, resolved relative to this module so it works both
+ *  from source (src/web) and from the ncc bundle (dist/web). */
+export function webRootPath(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
+}
+
 export async function startDashboard(options: {
   target: InstanceTarget;
   port: number;
@@ -22,7 +28,7 @@ export async function startDashboard(options: {
     client = createHerdrClient({ socketPath: options.target.socketPath });
     client.start(update => session.apply(update, monotonicSeconds()));
   }
-  const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../web');
+  const webRoot = webRootPath();
   const server = await startServer({
     port: options.port,
     webRoot,

@@ -11,3 +11,6 @@ coverage/
 
 # Local documentation artifacts
 docs
+
+# Local pack output
+*.tgz

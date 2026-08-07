@@ -56,6 +56,7 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
   let requestSequence = 0;
   let started = false;
   let stopped = false;
+  const stopController = new AbortController();
   let eventSocket: net.Socket | null = null;
   let reachedLive = false;
   /** Current terminal → pane mapping from the latest snapshot. herdr's focus
@@ -72,6 +73,9 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
 
   function stop(): void {
     stopped = true;
+    // Aborts a pending reconnect backoff, so a stopped client never keeps the
+    // process alive waiting on a sleep timer.
+    stopController.abort();
     eventSocket?.destroy();
     eventSocket = null;
   }
@@ -105,7 +109,11 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
       }
       if (stopped) return;
       if (reachedLive) delayMs = initialReconnectDelayMs;
-      await sleep(delayMs);
+      try {
+        await sleep(delayMs, undefined, { signal: stopController.signal });
+      } catch {
+        return; // stop() aborted the backoff
+      }
       delayMs = Math.min(delayMs * 2, maximumReconnectDelayMs);
     }
   }

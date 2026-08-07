@@ -25,6 +25,9 @@ interface Entry {
   official: number;
   display: number;
   pace: PaceState;
+  /** Live speed factor injected from outside the seeded pace — the multiplayer
+   *  host drives it from crew uptime (M4). 1 in local mode. */
+  externalPace: number;
   isRetired: boolean;
   isQueuedNextGrid: boolean;
   /** A block that occurs while parked stays a pit-lane incident. */
@@ -146,7 +149,7 @@ export function createRaceSession(
       if (!isDriving(entry)) continue;
       const official = { value: entry.official };
       const pace = { ...entry.pace };
-      const unused = walk(official, pace, entry.terminalID, elapsed, paceFactor);
+      const unused = walk(official, pace, entry.terminalID, elapsed, paceFactor * entry.externalPace);
       if (official.value >= totalLaps) {
         const finishTime = elapsed - unused;
         if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
@@ -165,7 +168,7 @@ export function createRaceSession(
     for (const entry of entries.values()) {
       if (isDriving(entry)) {
         const official = { value: entry.official };
-        walk(official, entry.pace, entry.terminalID, budget, paceFactor);
+        walk(official, entry.pace, entry.terminalID, budget, paceFactor * entry.externalPace);
         entry.display += official.value - entry.official;
         entry.official = official.value;
       } else if (entry.status === 'done' && !entry.isRetired) {
@@ -462,6 +465,7 @@ export function createRaceSession(
       official: 0,
       display: 0,
       pace: { multiplier: 1, lap: -1 },
+      externalPace: 1,
       isRetired: false,
       isQueuedNextGrid: false,
       incidentInPit: false,
@@ -677,7 +681,8 @@ export function createRaceSession(
       if (entry.status === 'working') {
         return RaceRules.baseSpeed
           * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
-          * paceFactor;
+          * paceFactor
+          * entry.externalPace;
       }
       if (entry.status === 'done') {
         return RaceRules.baseSpeed * RaceRules.doneCooldownFactor * paceFactor;
@@ -720,7 +725,18 @@ export function createRaceSession(
     }
   }
 
-  return { apply, applyConnection, applySnapshot, advance, presentation, setTotalLaps };
+  /** Injects a live speed factor for one car (multiplayer uptime, M4). Settles
+   *  scored time first so the new factor applies only from this instant. */
+  function setExternalPace(terminalID: string, factor: number, now: number): void {
+    const entry = entries.get(terminalID);
+    if (!entry) return;
+    const next = Math.min(Math.max(factor, 0), 2);
+    if (next === entry.externalPace) return;
+    advance(now);
+    entry.externalPace = next;
+  }
+
+  return { apply, applyConnection, applySnapshot, advance, presentation, setTotalLaps, setExternalPace };
 }
 
 export type RaceSession = ReturnType<typeof createRaceSession>;

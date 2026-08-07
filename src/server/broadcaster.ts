@@ -9,6 +9,10 @@ export function createRaceBroadcaster(
   session: RaceSession,
   clock: () => number,
   tickMs = 250,
+  /** Multiplayer only: the venue pinned at host launch, stamped on every sync
+   *  so viewers render it and lock their selector. Local mode leaves the
+   *  circuit to each browser and omits it. */
+  pinnedCircuitID?: string,
 ) {
   let timer: ReturnType<typeof setInterval> | null = null;
   const clients = new Set<(json: string) => void>();
@@ -47,7 +51,9 @@ export function createRaceBroadcaster(
   }
 
   function buildSync(): SyncMessage {
-    return { type: 'sync', ...session.presentation() };
+    return pinnedCircuitID === undefined
+      ? { type: 'sync', ...session.presentation() }
+      : { type: 'sync', circuitID: pinnedCircuitID, ...session.presentation() };
   }
 
   return { start, stop, addClient, removeClient, tick, buildSync };

@@ -2803,7 +2803,7 @@ module.exports = createWebSocketStream;
 
 /***/ }),
 
-/***/ 332:
+/***/ 951:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
 
@@ -3045,7 +3045,7 @@ const { createHash } = __nccwpck_require__(982);
 
 const extension = __nccwpck_require__(335);
 const PerMessageDeflate = __nccwpck_require__(376);
-const subprotocol = __nccwpck_require__(332);
+const subprotocol = __nccwpck_require__(951);
 const WebSocket = __nccwpck_require__(681);
 const { CLOSE_TIMEOUT, GUID, kWebSocket } = __nccwpck_require__(791);
 
@@ -5204,7 +5204,11 @@ const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(impor
  * Owns the server-side tick: advances the race session on a fixed cadence and
  * fans full sync messages out to connected browsers.
  */
-function createRaceBroadcaster(session, clock, tickMs = 250) {
+function createRaceBroadcaster(session, clock, tickMs = 250, 
+/** Multiplayer only: the venue pinned at host launch, stamped on every sync
+ *  so viewers render it and lock their selector. Local mode leaves the
+ *  circuit to each browser and omits it. */
+pinnedCircuitID) {
     let timer = null;
     const clients = new Set();
     function start() {
@@ -5239,7 +5243,9 @@ function createRaceBroadcaster(session, clock, tickMs = 250) {
             send(json);
     }
     function buildSync() {
-        return { type: 'sync', ...session.presentation() };
+        return pinnedCircuitID === undefined
+            ? { type: 'sync', ...session.presentation() }
+            : { type: 'sync', circuitID: pinnedCircuitID, ...session.presentation() };
     }
     return { start, stop, addClient, removeClient, tick, buildSync };
 }
@@ -5291,6 +5297,25 @@ function stableHash(value) {
     }
     return hash;
 }
+/** Rules for the multiplayer two-car mode (design decisions M1–M8). Cars are
+ *  fictional; these constants shape how real agent activity becomes speed. */
+const MultiplayerRules = {
+    /** Cars fielded per team, like a real constructor (M1). A participant with a
+     *  single agent fields one car (M5). */
+    carsPerTeam: 2,
+    /** Crew agents working at once for full power — M3's k. At 1, scale buys
+     *  availability (someone is always working) rather than raw speed. */
+    crewPowerCap: 1,
+    /** Sliding window (seconds) the rolling uptime is measured over (M4). The
+     *  momentum dial: shorter is jumpier, longer is heavier. */
+    uptimeWindowSeconds: 90,
+    /** Car speed factor = uptimeFloor + uptimeSpan × rolling uptime (M4). */
+    uptimeFloor: 0.75,
+    uptimeSpan: 0.5,
+    /** Per-lap random jitter half-width. Multiplayer speed is earned via uptime;
+     *  randomness stays as flavor only (±5% against local's ±25%). */
+    paceJitterHalfWidth: 0.05,
+};
 /** Production pace: seeded pseudo-random, reproducible across launches for
  *  the same grand prix sequence and terminal, varying lap to lap. */
 const seededPace = (grandPrix, terminalID, lap) => {
@@ -5299,6 +5324,12 @@ const seededPace = (grandPrix, terminalID, lap) => {
     const mixed = ((hash ^ (hash >> 33n)) * 0xff51afd7ed558ccdn) & MASK_64;
     const unit = Number(mixed % 100000n) / 99999;
     return RaceRules.paceMin + unit * (RaceRules.paceMax - RaceRules.paceMin);
+};
+/** Multiplayer pace: the same seeded randomness squeezed into the jitter band.
+ *  Rank is meant to be earned through uptime (M3/M4); the dice only flavor. */
+const multiplayerPace = (grandPrix, terminalID, lap) => {
+    const scale = MultiplayerRules.paceJitterHalfWidth / (RaceRules.paceMax - 1);
+    return 1 + (seededPace(grandPrix, terminalID, lap) - 1) * scale;
 };
 
 ;// CONCATENATED MODULE: ./src/server/fixtures.ts
@@ -5567,6 +5598,7 @@ function createHerdrClient(options = {}) {
     let requestSequence = 0;
     let started = false;
     let stopped = false;
+    const stopController = new AbortController();
     let eventSocket = null;
     let reachedLive = false;
     /** Current terminal → pane mapping from the latest snapshot. herdr's focus
@@ -5582,6 +5614,9 @@ function createHerdrClient(options = {}) {
     }
     function stop() {
         stopped = true;
+        // Aborts a pending reconnect backoff, so a stopped client never keeps the
+        // process alive waiting on a sleep timer.
+        stopController.abort();
         eventSocket?.destroy();
         eventSocket = null;
     }
@@ -5620,7 +5655,12 @@ function createHerdrClient(options = {}) {
                 return;
             if (reachedLive)
                 delayMs = initialReconnectDelayMs;
-            await (0,promises_namespaceObject.setTimeout)(delayMs);
+            try {
+                await (0,promises_namespaceObject.setTimeout)(delayMs, undefined, { signal: stopController.signal });
+            }
+            catch {
+                return; // stop() aborted the backoff
+            }
             delayMs = Math.min(delayMs * 2, maximumReconnectDelayMs);
         }
     }
@@ -5934,7 +5974,7 @@ wallClock = () => new Date()) {
                 continue;
             const official = { value: entry.official };
             const pace = { ...entry.pace };
-            const unused = walk(official, pace, entry.terminalID, elapsed, paceFactor);
+            const unused = walk(official, pace, entry.terminalID, elapsed, paceFactor * entry.externalPace);
             if (official.value >= totalLaps) {
                 const finishTime = elapsed - unused;
                 if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
@@ -5951,7 +5991,7 @@ wallClock = () => new Date()) {
         for (const entry of entries.values()) {
             if (isDriving(entry)) {
                 const official = { value: entry.official };
-                walk(official, entry.pace, entry.terminalID, budget, paceFactor);
+                walk(official, entry.pace, entry.terminalID, budget, paceFactor * entry.externalPace);
                 entry.display += official.value - entry.official;
                 entry.official = official.value;
             }
@@ -6232,6 +6272,7 @@ wallClock = () => new Date()) {
             official: 0,
             display: 0,
             pace: { multiplier: 1, lap: -1 },
+            externalPace: 1,
             isRetired: false,
             isQueuedNextGrid: false,
             incidentInPit: false,
@@ -6433,7 +6474,8 @@ wallClock = () => new Date()) {
             if (entry.status === 'working') {
                 return RaceRules.baseSpeed
                     * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
-                    * paceFactor;
+                    * paceFactor
+                    * entry.externalPace;
             }
             if (entry.status === 'done') {
                 return RaceRules.baseSpeed * RaceRules.doneCooldownFactor * paceFactor;
@@ -6478,7 +6520,19 @@ wallClock = () => new Date()) {
             }
         }
     }
-    return { apply, applyConnection, applySnapshot, advance, presentation, setTotalLaps };
+    /** Injects a live speed factor for one car (multiplayer uptime, M4). Settles
+     *  scored time first so the new factor applies only from this instant. */
+    function setExternalPace(terminalID, factor, now) {
+        const entry = entries.get(terminalID);
+        if (!entry)
+            return;
+        const next = Math.min(Math.max(factor, 0), 2);
+        if (next === entry.externalPace)
+            return;
+        advance(now);
+        entry.externalPace = next;
+    }
+    return { apply, applyConnection, applySnapshot, advance, presentation, setTotalLaps, setExternalPace };
 }
 // MARK: - Helpers
 function clampPace(value) {
@@ -6527,7 +6581,7 @@ var receiver = __nccwpck_require__(893);
 // EXTERNAL MODULE: ./node_modules/ws/lib/sender.js
 var sender = __nccwpck_require__(389);
 // EXTERNAL MODULE: ./node_modules/ws/lib/subprotocol.js
-var subprotocol = __nccwpck_require__(332);
+var subprotocol = __nccwpck_require__(951);
 // EXTERNAL MODULE: ./node_modules/ws/lib/websocket.js
 var websocket = __nccwpck_require__(681);
 // EXTERNAL MODULE: ./node_modules/ws/lib/websocket-server.js
@@ -6552,6 +6606,7 @@ var websocket_server = __nccwpck_require__(129);
 
 
 
+
 const MIME = {
     '.html': 'text/html; charset=utf-8',
     '.js': 'text/javascript',
@@ -6569,15 +6624,27 @@ const MIME = {
 async function startServer(options) {
     const webRoot = external_node_path_default().resolve(options.webRoot);
     const server = external_node_http_default().createServer((request, response) => serveStatic(webRoot, request, response));
-    const port = await listenOnFreePort(server, options.port);
+    const port = await listenOnFreePort(server, options.port, options.bindHost ?? '127.0.0.1');
     const sockets = new websocket_server({
         noServer: true,
         maxPayload: 4096,
         perMessageDeflate: false,
     });
+    // Join payloads carry a whole agent roster, so they get a larger (but still
+    // bounded) frame budget than the tiny viewer messages.
+    const joinSockets = options.onJoin
+        ? new websocket_server({ noServer: true, maxPayload: 64 * 1024, perMessageDeflate: false })
+        : null;
     const allowedOrigin = `http://127.0.0.1:${port}`;
+    const originAllowed = (request) => options.viewerOrigin === 'host'
+        ? typeof request.headers.host === 'string' && request.headers.origin === `http://${request.headers.host}`
+        : request.headers.origin === allowedOrigin;
     server.on('upgrade', (request, socket, head) => {
-        if (request.url !== '/ws' || request.headers.origin !== allowedOrigin) {
+        if (request.url === '/join' && joinSockets && options.onJoin) {
+            joinSockets.handleUpgrade(request, socket, head, client => options.onJoin(client));
+            return;
+        }
+        if (request.url !== '/ws' || !originAllowed(request)) {
             socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
             socket.destroy();
             return;
@@ -6617,6 +6684,11 @@ async function startServer(options) {
             sockets.close();
             for (const client of sockets.clients)
                 client.terminate();
+            if (joinSockets) {
+                joinSockets.close();
+                for (const client of joinSockets.clients)
+                    client.terminate();
+            }
             server.closeAllConnections();
             server.close(() => resolve());
         }),
@@ -6643,8 +6715,8 @@ function serveStatic(webRoot, request, response) {
     });
     external_node_fs_default().createReadStream(filePath).pipe(response);
 }
-/** Binds 127.0.0.1 only. Tries preferred..preferred+19 on EADDRINUSE. */
-async function listenOnFreePort(server, preferred) {
+/** Tries preferred..preferred+19 on EADDRINUSE. */
+async function listenOnFreePort(server, preferred, bindHost) {
     for (let port = preferred; port < preferred + 20; port += 1) {
         try {
             await new Promise((resolve, reject) => {
@@ -6658,17 +6730,37 @@ async function listenOnFreePort(server, preferred) {
                 };
                 server.once('error', onError);
                 server.once('listening', onListening);
-                server.listen(port, '127.0.0.1');
+                server.listen(port, bindHost);
             });
-            return port;
         }
         catch (error) {
             if (error.code !== 'EADDRINUSE')
                 throw error;
             await (0,promises_namespaceObject.setImmediate)();
+            continue;
         }
+        // On macOS/BSD a wildcard bind and another process's specific bind coexist
+        // on one port, in either order, so listen() succeeding does not prove the
+        // port is ours alone — the more specific listener would take the loopback
+        // traffic, and clients on the printed port would silently reach the wrong
+        // server. Probing the complement address closes both directions: a
+        // loopback bind checks no one holds the wildcard, and a wildcard bind
+        // checks no one holds loopback. Our own bind never blocks the probe; only
+        // another socket holding the complement exactly does.
+        const complement = bindHost === '0.0.0.0' ? '127.0.0.1' : '0.0.0.0';
+        if (await canBind(port, complement))
+            return port;
+        await new Promise(resolve => server.close(() => resolve()));
+        await (0,promises_namespaceObject.setImmediate)();
     }
     throw new Error(`no free port between ${preferred} and ${preferred + 19}`);
+}
+function canBind(port, host) {
+    return new Promise(resolve => {
+        const probe = external_node_net_default().createServer();
+        probe.once('error', () => resolve(false));
+        probe.listen(port, host, () => probe.close(() => resolve(true)));
+    });
 }
 
 ;// CONCATENATED MODULE: ./src/server/dashboard.ts
@@ -6680,6 +6772,11 @@ async function listenOnFreePort(server, preferred) {
 
 
 const monotonicSeconds = () => performance.now() / 1000;
+/** The built web bundle, resolved relative to this module so it works both
+ *  from source (src/web) and from the ncc bundle (dist/web). */
+function webRootPath() {
+    return external_node_path_default().resolve(external_node_path_default().dirname((0,external_node_url_namespaceObject.fileURLToPath)(import.meta.url)), '../web');
+}
 async function startDashboard(options) {
     const session = createRaceSession();
     const broadcaster = createRaceBroadcaster(session, monotonicSeconds);
@@ -6691,7 +6788,7 @@ async function startDashboard(options) {
         client = createHerdrClient({ socketPath: options.target.socketPath });
         client.start(update => session.apply(update, monotonicSeconds()));
     }
-    const webRoot = external_node_path_default().resolve(external_node_path_default().dirname((0,external_node_url_namespaceObject.fileURLToPath)(import.meta.url)), '../web');
+    const webRoot = webRootPath();
     const server = await startServer({
         port: options.port,
         webRoot,
@@ -6910,7 +7007,694 @@ function removeOwnedRecord(target, pid) {
     removeRecord(target);
 }
 
+;// CONCATENATED MODULE: ./src/shared/venues.ts
+/** Venue metadata shared by the server and the browser: the published race
+ *  distance per circuit. The single source of truth — the browser's circuit
+ *  definitions (geometry) and the server's `host --circuit` validation both
+ *  read distances from here, so the two sides can never disagree about how
+ *  long a venue's race is. */
+const VENUES = [
+    { id: 'herdr', laps: 58 },
+    { id: 'korea', laps: 55 },
+    { id: 'suzuka', laps: 53 },
+    { id: 'catalunya', laps: 66 },
+    { id: 'las-vegas', laps: 50 },
+];
+const VENUE_IDS = VENUES.map(venue => venue.id);
+const DEFAULT_VENUE_ID = 'herdr';
+function isVenueID(id) {
+    return VENUE_IDS.includes(id);
+}
+function venueLaps(id) {
+    return VENUES.find(venue => venue.id === id).laps;
+}
+
+;// CONCATENATED MODULE: ./src/server/multiplayer/uptime.ts
+/**
+ * Rolling uptime over a sliding window (design decision M4) — the momentum
+ * behind a car's speed. Power is piecewise constant between reports (no herdr
+ * event means no change), so the tracker stores the change points and
+ * integrates exactly; no sampling, no decay approximation.
+ */
+function createUptimeTracker(windowSeconds) {
+    /** Change points, oldest first. Power before the first entry is 0. */
+    let segments = [];
+    /** Records the instantaneous power (0..1) from `now` on. */
+    function setPower(now, power) {
+        const last = segments[segments.length - 1];
+        if (last && last.power === power)
+            return;
+        if (last && last.at >= now) {
+            // Same-instant correction: the latest value wins.
+            last.power = power;
+            return;
+        }
+        segments.push({ at: now, power });
+    }
+    /** Mean power over [now - window, now], in 0..1. */
+    function uptime(now) {
+        const start = now - windowSeconds;
+        prune(start);
+        let integral = 0;
+        for (let index = 0; index < segments.length; index += 1) {
+            const from = Math.max(segments[index].at, start);
+            const to = Math.min(index + 1 < segments.length ? segments[index + 1].at : now, now);
+            if (to > from)
+                integral += segments[index].power * (to - from);
+        }
+        return Math.min(1, Math.max(0, integral / windowSeconds));
+    }
+    /** Drops change points that no longer affect the window, keeping the last
+     *  one at or before `start` as the window's boundary value. */
+    function prune(start) {
+        let firstRelevant = 0;
+        while (firstRelevant + 1 < segments.length &&
+            segments[firstRelevant + 1].at <= start) {
+            firstRelevant += 1;
+        }
+        if (firstRelevant > 0)
+            segments = segments.slice(firstRelevant);
+    }
+    return { setPower, uptime };
+}
+
+;// CONCATENATED MODULE: ./src/server/multiplayer/wire.ts
+/** join↔host protocol version. Mismatches are rejected with a clear error at
+ *  the handshake, mirroring the herdr protocol policy. v2 is the two-car
+ *  paddock (design decisions M1–M8): per-crew aggregates instead of per-agent
+ *  rows. */
+const MULTIPLAYER_PROTOCOL = 2;
+const CREWS_PER_TEAM = 2;
+const NAME_LENGTH_LIMIT = 24;
+function emptyCounters() {
+    return { incidents: 0, recoveries: 0, pits: 0, greens: 0, chequered: 0, stints: 0 };
+}
+function emptyCrewReport() {
+    return { size: 0, working: 0, blocked: 0, counters: emptyCounters() };
+}
+const COUNTER_KEYS = ['incidents', 'recoveries', 'pits', 'greens', 'chequered', 'stints'];
+const CREW_SIZE_LIMIT = 999;
+const COUNTER_LIMIT = 1_000_000_000;
+/** Trimmed display name, or null when unusable. The name is the team label and
+ *  the reconnect key, so it must be visible text of a sane length. */
+function normalizeParticipantName(raw) {
+    const name = raw.trim();
+    if (name.length === 0 || name.length > NAME_LENGTH_LIMIT)
+        return null;
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(name))
+        return null;
+    return name;
+}
+/** Strictly decodes one join-side message. Anything malformed — wrong shape,
+ *  oversized fields, inconsistent counts — returns null; the join socket is
+ *  untrusted network input, so nothing is coerced or partially accepted. */
+function decodeJoinMessage(raw) {
+    const value = parseObject(raw);
+    if (value === null)
+        return null;
+    if (value.type === 'hello') {
+        if (typeof value.protocol !== 'number' || typeof value.name !== 'string')
+            return null;
+        const name = normalizeParticipantName(value.name);
+        if (name === null)
+            return null;
+        return { type: 'hello', protocol: value.protocol, name };
+    }
+    if (value.type === 'offline')
+        return { type: 'offline' };
+    if (value.type === 'snapshot') {
+        if (!Array.isArray(value.crews) || value.crews.length > CREWS_PER_TEAM)
+            return null;
+        const crews = [];
+        for (const item of value.crews) {
+            const crew = decodeCrew(item);
+            if (crew === null)
+                return null;
+            crews.push(crew);
+        }
+        return { type: 'snapshot', crews };
+    }
+    return null;
+}
+function decodeCrew(value) {
+    if (typeof value !== 'object' || value === null)
+        return null;
+    const crew = value;
+    const size = boundedCount(crew.size, CREW_SIZE_LIMIT);
+    const working = boundedCount(crew.working, CREW_SIZE_LIMIT);
+    const blocked = boundedCount(crew.blocked, CREW_SIZE_LIMIT);
+    if (size === null || working === null || blocked === null)
+        return null;
+    // working and blocked are disjoint subsets of the crew.
+    if (working + blocked > size)
+        return null;
+    if (typeof crew.counters !== 'object' || crew.counters === null)
+        return null;
+    const raw = crew.counters;
+    const counters = emptyCounters();
+    for (const key of COUNTER_KEYS) {
+        const count = boundedCount(raw[key], COUNTER_LIMIT);
+        if (count === null)
+            return null;
+        counters[key] = count;
+    }
+    return { size, working, blocked, counters };
+}
+function boundedCount(value, limit) {
+    if (typeof value !== 'number' || !Number.isInteger(value))
+        return null;
+    if (value < 0 || value > limit)
+        return null;
+    return value;
+}
+/** Decodes one host-side reply on the join client. */
+function decodeHostMessage(raw) {
+    const value = parseObject(raw);
+    if (value === null)
+        return null;
+    if (value.type === 'welcome')
+        return { type: 'welcome' };
+    if (value.type === 'reject' && typeof value.reason === 'string') {
+        return { type: 'reject', reason: value.reason.slice(0, 200) };
+    }
+    return null;
+}
+function parseObject(raw) {
+    let value;
+    try {
+        value = JSON.parse(raw);
+    }
+    catch {
+        return null;
+    }
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+        return null;
+    return value;
+}
+
+;// CONCATENATED MODULE: ./src/server/multiplayer/registry.ts
+
+
+
+/**
+ * The host's roster for the two-car paddock (M1): one participant = one team
+ * fielding up to two cars, whose crews are the participant's real agents.
+ * Projects everything the host knows into a SourceSnapshot for the race
+ * session; car identities are `name/car1`, `name/car2`, stable for the whole
+ * hosting session.
+ */
+function createParticipantRegistry() {
+    /** Insertion order is team order; participants are never removed, so teams
+     *  and points survive departures for the lifetime of the host. */
+    const participants = new Map();
+    function makeCar() {
+        return {
+            crew: emptyCrewReport(),
+            stintTotal: 0,
+            tracker: createUptimeTracker(MultiplayerRules.uptimeWindowSeconds),
+        };
+    }
+    /** Claims `name` for a new join socket. Returns false while the name is
+     *  connected — reject and let the caller explain; a disconnected name is
+     *  resumed with its team, cars, and points intact. */
+    function connect(name) {
+        const existing = participants.get(name);
+        if (existing) {
+            if (existing.connected)
+                return false;
+            existing.connected = true;
+            // Cars stay pitted until the resumed participant pushes fresh telemetry,
+            // and that first report re-baselines the restarted counters.
+            existing.herdrLive = false;
+            existing.countersBaselined = false;
+            return true;
+        }
+        participants.set(name, {
+            name,
+            connected: true,
+            herdrLive: false,
+            cars: Array.from({ length: CREWS_PER_TEAM }, makeCar),
+            countersBaselined: false,
+        });
+        return true;
+    }
+    /** Design decision 7: the team and points stay, the cars all pit. */
+    function disconnect(name, now) {
+        const participant = participants.get(name);
+        if (!participant)
+            return;
+        participant.connected = false;
+        participant.herdrLive = false;
+        stopPower(participant, now);
+    }
+    function update(name, crews, now) {
+        const participant = participants.get(name);
+        if (!participant)
+            return;
+        participant.herdrLive = true;
+        for (let index = 0; index < CREWS_PER_TEAM; index += 1) {
+            const car = participant.cars[index];
+            const report = crews[index] ?? emptyCrewReport();
+            if (participant.countersBaselined) {
+                // Counters are cumulative per join process; only growth is an event.
+                car.stintTotal += Math.max(0, report.counters.stints - car.crew.counters.stints);
+            }
+            car.crew = report;
+            car.tracker.setPower(now, carPower(report));
+        }
+        participant.countersBaselined = true;
+    }
+    /** The participant's local herdr went down: keep the grid, pit the cars. */
+    function markOffline(name, now) {
+        const participant = participants.get(name);
+        if (!participant)
+            return;
+        participant.herdrLive = false;
+        stopPower(participant, now);
+    }
+    function stopPower(participant, now) {
+        for (const car of participant.cars)
+            car.tracker.setPower(now, 0);
+    }
+    /** M3: full power once any crew agent works (crewPowerCap = 1). */
+    function carPower(crew) {
+        return Math.min(crew.working, MultiplayerRules.crewPowerCap) / MultiplayerRules.crewPowerCap;
+    }
+    function isRacing(participant) {
+        return participant.connected && participant.herdrLive;
+    }
+    /** Everything the race session gets to see: up to two synthesized cars per
+     *  team. Names and per-agent identifiers never reached the host (M7), so
+     *  this projection cannot leak them; what shows is the crew arithmetic the
+     *  dashboard is meant to show (M6). */
+    function snapshot() {
+        const teams = [];
+        for (const participant of participants.values()) {
+            const racing = isRacing(participant);
+            const agents = [];
+            participant.cars.forEach((car, index) => {
+                if (car.crew.size === 0)
+                    return; // an empty crew fields no car (M5)
+                const working = racing ? car.crew.working : 0;
+                agents.push({
+                    terminalID: `${participant.name}/car${index + 1}`,
+                    paneID: `${participant.name}/car${index + 1}`,
+                    tabLabel: `car ${index + 1}`,
+                    // Rendered as the row badge: the crew arithmetic behind the speed.
+                    agentKind: `crew ${working}/${car.crew.size}`,
+                    // Monotonic stint identity; the race session announces NEW STINT
+                    // whenever it changes (M8).
+                    agentSessionReference: `stint-${car.stintTotal}`,
+                    // Focus is inactive in multiplayer (design decision 4).
+                    isFocused: false,
+                    status: !racing ? 'idle'
+                        : car.crew.blocked > 0 ? 'blocked'
+                            : car.crew.working > 0 ? 'working'
+                                : 'idle',
+                });
+            });
+            if (agents.length === 0)
+                continue;
+            teams.push({ id: participant.name, label: participant.name, agents });
+        }
+        return { teams };
+    }
+    /** Live speed factors for every fielded car (M4), for the host to inject
+     *  into the race session each tick. */
+    function paceFactors(now) {
+        const factors = [];
+        for (const participant of participants.values()) {
+            participant.cars.forEach((car, index) => {
+                if (car.crew.size === 0)
+                    return;
+                factors.push({
+                    terminalID: `${participant.name}/car${index + 1}`,
+                    factor: MultiplayerRules.uptimeFloor + MultiplayerRules.uptimeSpan * car.tracker.uptime(now),
+                });
+            });
+        }
+        return factors;
+    }
+    return { connect, disconnect, update, markOffline, snapshot, paceFactors };
+}
+
+;// CONCATENATED MODULE: ./src/server/multiplayer/host.ts
+
+
+
+
+
+
+
+
+
+const host_monotonicSeconds = () => performance.now() / 1000;
+/**
+ * The multiplayer aggregation server. Pure aggregator (design decision 10): it
+ * never connects to a herdr — participants push anonymized snapshots over
+ * /join, and this process owns the one race session every viewer watches.
+ */
+async function startHost(options) {
+    const log = options.log ?? (() => { });
+    const circuit = options.circuit ?? DEFAULT_VENUE_ID;
+    // Multiplayer rank is earned through uptime (M3/M4); the seeded dice stay
+    // as flavor only, so the session gets the narrowed pace source.
+    const session = createRaceSession(multiplayerPace);
+    const broadcaster = createRaceBroadcaster(session, host_monotonicSeconds, undefined, circuit);
+    // The venue is fixed for the whole hosting session; its published distance
+    // is the race distance from the first Grand Prix on.
+    session.setTotalLaps(venueLaps(circuit), host_monotonicSeconds());
+    // There is no herdr connection whose liveness could gate the clock; the
+    // host's sources are the participants, so race time always flows.
+    session.applyConnection({ kind: 'live' }, host_monotonicSeconds());
+    const registry = createParticipantRegistry();
+    // publish runs inside join-socket message handlers, where a throw would be
+    // an uncaught exception taking the whole party down. The known overflow is
+    // the race grid's 99 car numbers (4+ participants at the per-participant
+    // cap): the session refuses the excess cars, the host keeps racing the
+    // ones already on the grid, and the terminal says why.
+    const publish = () => {
+        try {
+            session.applySnapshot(registry.snapshot(), host_monotonicSeconds());
+        }
+        catch (error) {
+            log(`Snapshot rejected: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+    const server = await startServer({
+        port: options.port,
+        webRoot: webRootPath(),
+        broadcaster,
+        bindHost: options.bindHost ?? '0.0.0.0',
+        viewerOrigin: 'host',
+        // Focus is inactive in multiplayer (design decision 4): the host cannot
+        // know whose browser clicked, and relaying would let anyone on the
+        // network shake someone else's terminal. Circuit writes are ignored for
+        // the same reason — the venue was pinned above, at launch.
+        onFocus: () => { },
+        onCircuit: () => { },
+        onJoin: socket => attachParticipant(socket, registry, publish, log),
+    });
+    broadcaster.start();
+    // The momentum loop (M4): rolling uptime changes with the passage of time
+    // alone, so car speeds are refreshed on a cadence, not just on snapshots.
+    const paceTimer = setInterval(() => {
+        const now = host_monotonicSeconds();
+        for (const { terminalID, factor } of registry.paceFactors(now)) {
+            session.setExternalPace(terminalID, factor, now);
+        }
+    }, 250);
+    return {
+        port: server.port,
+        close: async () => {
+            clearInterval(paceTimer);
+            broadcaster.stop();
+            await server.close();
+        },
+    };
+}
+/** Per-socket handshake and message pump for one joining participant. */
+function attachParticipant(socket, registry, publish, log) {
+    let name = null;
+    const reply = (message) => socket.send(JSON.stringify(message));
+    socket.on('message', raw => {
+        const message = decodeJoinMessage(String(raw));
+        if (name === null) {
+            // The first message must be a valid hello; anything else is a client
+            // this host cannot reason with, so fail loudly instead of guessing.
+            if (message?.type !== 'hello') {
+                reply({ type: 'reject', reason: 'Expected a protocol handshake. Update herdr-f1 on both sides.' });
+                socket.close();
+                return;
+            }
+            if (message.protocol !== MULTIPLAYER_PROTOCOL) {
+                reply({
+                    type: 'reject',
+                    reason: `This host speaks multiplayer protocol ${MULTIPLAYER_PROTOCOL}, ` +
+                        `the joining client protocol ${message.protocol}. Update herdr-f1 on the older side.`,
+                });
+                socket.close();
+                return;
+            }
+            if (!registry.connect(message.name)) {
+                reply({
+                    type: 'reject',
+                    reason: `"${message.name}" is already connected. Pick another name, or reuse it after that session disconnects.`,
+                });
+                socket.close();
+                return;
+            }
+            name = message.name;
+            reply({ type: 'welcome' });
+            log(`${name} joined the paddock`);
+            return;
+        }
+        // Post-handshake traffic is untrusted network input: malformed frames are
+        // dropped, matching the viewer socket's tolerance.
+        if (message?.type === 'snapshot') {
+            registry.update(name, message.crews, host_monotonicSeconds());
+            publish();
+        }
+        else if (message?.type === 'offline') {
+            registry.markOffline(name, host_monotonicSeconds());
+            publish();
+        }
+    });
+    socket.on('close', () => {
+        if (name === null)
+            return;
+        registry.disconnect(name, host_monotonicSeconds());
+        publish();
+        log(`${name} disconnected — cars to the pit lane (rejoin with the same name to resume)`);
+    });
+    socket.on('error', () => { }); // 'close' always follows; nothing extra to do
+}
+/** Foreground CLI runner (design decision 9): prints where to point browsers
+ *  and join clients, then hosts until Ctrl+C. */
+async function runHost(port, circuit) {
+    const host = await startHost({ port, circuit, log: line => console.log(line) });
+    console.log(`Herdr F1 multiplayer host · port ${host.port} · circuit ${circuit} (${venueLaps(circuit)} laps)`);
+    for (const address of viewerAddresses()) {
+        console.log(`  view    http://${address}:${host.port}`);
+    }
+    console.log(`  join    herdr-f1 join <this-host>:${host.port} --name <your-name>`);
+    console.log('No authentication — host on trusted networks (LAN/VPN) only. Ctrl+C to stop.');
+    await new Promise(resolve => {
+        const requestShutdown = () => resolve();
+        process.once('SIGINT', requestShutdown);
+        process.once('SIGTERM', requestShutdown);
+    });
+    console.log('Stopping host…');
+    await host.close();
+}
+/** Non-internal IPv4 addresses, loopback last, so the printed URLs cover both
+ *  the LAN and a browser on the host machine itself. */
+function viewerAddresses() {
+    const addresses = [];
+    for (const interfaces of Object.values(external_node_os_default().networkInterfaces())) {
+        for (const entry of interfaces ?? []) {
+            if (entry.family === 'IPv4' && !entry.internal)
+                addresses.push(entry.address);
+        }
+    }
+    addresses.push('127.0.0.1');
+    return addresses;
+}
+
+;// CONCATENATED MODULE: ./src/server/multiplayer/join.ts
+
+
+
+
+
+
+/**
+ * Projects local herdr snapshots into the two-car wire format (M2/M7): agents
+ * are split into per-car crews on this side, and only aggregates — counts and
+ * cumulative transition counters — ever leave the machine. Names, per-agent
+ * IDs, and session references are not even hashed anymore; they simply are
+ * not sent.
+ */
+function createCrewTracker() {
+    const previousStatus = new Map();
+    const previousSession = new Map();
+    /** Cumulative per-crew transition counts since this process started (M8). */
+    const counters = [emptyCounters(), emptyCounters()];
+    function update(snapshot) {
+        const agents = allAgents(snapshot);
+        // Deterministic split (M2): stable hash order, alternating assignment.
+        // The same agent set always lands in the same crews — across reconnects
+        // too — and the two crews never differ in size by more than one.
+        const ordered = agents
+            .slice()
+            .sort((a, b) => {
+            const ha = stableHash(a.terminalID);
+            const hb = stableHash(b.terminalID);
+            return ha < hb ? -1 : ha > hb ? 1 : a.terminalID < b.terminalID ? -1 : 1;
+        });
+        const crews = [emptyCrewReport(), emptyCrewReport()];
+        const seen = new Set();
+        ordered.forEach((agent, index) => {
+            const crewIndex = index % CREWS_PER_TEAM;
+            const crew = crews[crewIndex];
+            crew.size += 1;
+            if (agent.status === 'working')
+                crew.working += 1;
+            if (agent.status === 'blocked')
+                crew.blocked += 1;
+            seen.add(agent.terminalID);
+            const before = previousStatus.get(agent.terminalID);
+            if (before !== undefined && before !== agent.status) {
+                countTransition(counters[crewIndex], before, agent.status);
+            }
+            previousStatus.set(agent.terminalID, agent.status);
+            const session = agent.agentSessionReference;
+            if (session !== null) {
+                const knownSession = previousSession.get(agent.terminalID);
+                if (knownSession !== undefined && knownSession !== session) {
+                    counters[crewIndex].stints += 1;
+                }
+                previousSession.set(agent.terminalID, session);
+            }
+        });
+        for (const id of [...previousStatus.keys()]) {
+            if (!seen.has(id)) {
+                previousStatus.delete(id);
+                previousSession.delete(id);
+            }
+        }
+        // Counters are cumulative and stay attached to their crew even after the
+        // agents that produced them move on; reports always carry both crews.
+        crews[0].counters = { ...counters[0] };
+        crews[1].counters = { ...counters[1] };
+        return crews;
+    }
+    return { update };
+}
+function countTransition(counters, before, after) {
+    // Mirrors the radio vocabulary: blocked takes precedence, then the rest.
+    if (after === 'blocked')
+        counters.incidents += 1;
+    else if (before === 'blocked')
+        counters.recoveries += 1;
+    else if (after === 'done')
+        counters.chequered += 1;
+    else if (before === 'working' && after === 'idle')
+        counters.pits += 1;
+    else if (before === 'idle' && after === 'working')
+        counters.greens += 1;
+}
+/**
+ * Foreground reporter (design decision 9): reads the local herdr socket and
+ * pushes crew aggregates to the host until Ctrl+C. Runs no server of its own.
+ * The host connection is outbound, so NAT needs no port forwarding.
+ */
+async function runJoin(options) {
+    const url = `ws://${bracketed(options.host)}:${options.port}/join`;
+    let stopped = false;
+    let fatalReason = null;
+    let socket = null;
+    let welcomed = false;
+    const tracker = createCrewTracker();
+    /** What the host should currently believe; replayed after every reconnect. */
+    let latest = null;
+    const push = (message) => {
+        if (welcomed && socket?.readyState === websocket.OPEN)
+            socket.send(JSON.stringify(message));
+    };
+    const closeSocket = () => socket?.close();
+    const client = createHerdrClient({ socketPath: options.socketPath });
+    client.start(update => {
+        if (update.kind === 'snapshot') {
+            latest = { type: 'snapshot', crews: tracker.update(update.snapshot) };
+        }
+        else if (update.state.kind === 'live') {
+            return; // the client fetches an authoritative snapshot right after going live
+        }
+        else {
+            // Local herdr feed is down: tell the host to pit our cars rather than
+            // race them on stale telemetry.
+            latest = { type: 'offline' };
+        }
+        push(latest);
+    });
+    // Aborting cuts a pending backoff sleep short, so Ctrl+C exits immediately
+    // instead of waiting out a timer that can be 30 seconds long.
+    const stopController = new AbortController();
+    const onSignal = () => {
+        stopped = true;
+        stopController.abort();
+        closeSocket();
+    };
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    console.log(`Herdr F1 · joining ${options.host}:${options.port} as "${options.name}" · Ctrl+C to leave`);
+    // Same backoff shape as the herdr client: reset on success, double to a cap.
+    let delayMs = 1000;
+    while (!stopped && fatalReason === null) {
+        await new Promise(resolve => {
+            const ws = new websocket(url);
+            socket = ws;
+            ws.on('open', () => {
+                ws.send(JSON.stringify({ type: 'hello', protocol: MULTIPLAYER_PROTOCOL, name: options.name }));
+            });
+            ws.on('message', raw => {
+                const message = decodeHostMessage(String(raw));
+                if (message?.type === 'welcome') {
+                    welcomed = true;
+                    delayMs = 1000;
+                    console.log(`Connected. Team "${options.name}" fields ${MultiplayerRules.carsPerTeam} cars; ` +
+                        'your agents are the crews.');
+                    if (latest)
+                        push(latest);
+                }
+                else if (message?.type === 'reject') {
+                    fatalReason = message.reason;
+                }
+            });
+            ws.on('error', () => { }); // 'close' always follows
+            ws.on('close', () => {
+                if (welcomed && !stopped && fatalReason === null) {
+                    console.log('Lost the host; reconnecting…');
+                }
+                welcomed = false;
+                socket = null;
+                resolve();
+            });
+        });
+        if (stopped || fatalReason !== null)
+            break;
+        try {
+            await (0,promises_namespaceObject.setTimeout)(delayMs, undefined, { signal: stopController.signal });
+        }
+        catch {
+            break; // the signal handler aborted the backoff
+        }
+        delayMs = Math.min(delayMs * 2, 30000);
+    }
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+    client.stop();
+    closeSocket();
+    if (fatalReason !== null) {
+        console.error(`Join rejected: ${fatalReason}`);
+        process.exitCode = 1;
+    }
+    else {
+        console.log('Left the session. Your team and points stay on the host until it shuts down.');
+    }
+}
+/** Raw IPv6 addresses need brackets in a URL authority. */
+function bracketed(host) {
+    return host.includes(':') ? `[${host}]` : host;
+}
+
 ;// CONCATENATED MODULE: ./src/server/cli.ts
+
+
+
+
 
 
 
@@ -6920,7 +7704,9 @@ function removeOwnedRecord(target, pid) {
 const USAGE = `Usage:
   herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]`;
+  herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
+  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>]
+  herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {
 }
 function parseArgs(argv, env = process.env) {
@@ -6934,17 +7720,50 @@ function parseArgs(argv, env = process.env) {
                 open: { type: 'boolean' },
                 socket: { type: 'string' },
                 fixture: { type: 'string' },
+                name: { type: 'string' },
+                circuit: { type: 'string' },
             },
         });
         const command = positionals[0] ?? 'start';
-        if (positionals.length > 1 || !['start', 'stop', 'status', '__daemon'].includes(command))
+        if (!['start', 'stop', 'status', '__daemon', 'host', 'join'].includes(command))
             throw new UsageError(USAGE);
-        const starts = command === 'start' || command === '__daemon';
+        if (positionals.length > (command === 'join' ? 2 : 1))
+            throw new UsageError(USAGE);
+        if (values.name !== undefined && command !== 'join')
+            throw new UsageError(USAGE);
+        // The venue is the host launcher's choice alone (design decision 8, revised).
+        if (values.circuit !== undefined && command !== 'host')
+            throw new UsageError(USAGE);
+        // `join` takes its port from <host[:port]>, so --port belongs to the
+        // commands that bind a server.
+        const starts = command === 'start' || command === '__daemon' || command === 'host';
         if ((!starts && values.port !== undefined) || (command !== 'start' && values.open))
             throw new UsageError(USAGE);
         const port = Number(values.port ?? 4158);
         if (!Number.isInteger(port) || port <= 0 || port > 65535)
             throw new UsageError(USAGE);
+        if (command === 'host') {
+            if (values.fixture || values.socket)
+                throw new UsageError(USAGE);
+            const circuit = values.circuit ?? DEFAULT_VENUE_ID;
+            if (!isVenueID(circuit))
+                throw new UsageError(USAGE);
+            return { kind: 'host', port, circuit };
+        }
+        if (command === 'join') {
+            if (positionals.length !== 2 || values.fixture)
+                throw new UsageError(USAGE);
+            const name = normalizeParticipantName(values.name ?? '');
+            if (name === null)
+                throw new UsageError(USAGE);
+            const address = parseHostAddress(positionals[1]);
+            return {
+                kind: 'join',
+                ...address,
+                name,
+                socketPath: values.socket ?? env.HERDR_SOCKET_PATH ?? defaultSocketPath,
+            };
+        }
         if (values.fixture && !FIXTURE_NAMES.includes(values.fixture))
             throw new UsageError(USAGE);
         if (values.fixture && values.socket)
@@ -6964,6 +7783,23 @@ function parseArgs(argv, env = process.env) {
         throw new UsageError(USAGE);
     }
 }
+/** `<host[:port]>`, defaulting to 4158. IPv6 works bracketed (`[::1]:4200`)
+ *  or bare with the default port. */
+function parseHostAddress(raw) {
+    const bracketed = /^\[([^\]]+)\](?::(\d{1,5}))?$/.exec(raw);
+    if (bracketed)
+        return validatedAddress(bracketed[1], bracketed[2]);
+    const parts = raw.split(':');
+    if (parts.length > 2)
+        return validatedAddress(raw, undefined); // bare IPv6
+    return validatedAddress(parts[0], parts[1]);
+}
+function validatedAddress(host, portText) {
+    const port = portText === undefined ? 4158 : Number(portText);
+    if (host.length === 0 || !Number.isInteger(port) || port <= 0 || port > 65535)
+        throw new UsageError(USAGE);
+    return { host, port };
+}
 async function run(argv) {
     let command;
     try {
@@ -6979,6 +7815,16 @@ async function run(argv) {
     }
     if (command.kind === 'daemon') {
         await runDaemon(command.target, command.port);
+        return;
+    }
+    // Multiplayer commands run in the foreground (design decision 9): party
+    // sessions are transient, so there is no daemon to manage.
+    if (command.kind === 'host') {
+        await runHost(command.port, command.circuit);
+        return;
+    }
+    if (command.kind === 'join') {
+        await runJoin(command);
         return;
     }
     if (command.kind === 'stop') {

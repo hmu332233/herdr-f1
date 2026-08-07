@@ -47,6 +47,26 @@ export function stableHash(value: string): bigint {
   return hash;
 }
 
+/** Rules for the multiplayer two-car mode (design decisions M1–M8). Cars are
+ *  fictional; these constants shape how real agent activity becomes speed. */
+export const MultiplayerRules = {
+  /** Cars fielded per team, like a real constructor (M1). A participant with a
+   *  single agent fields one car (M5). */
+  carsPerTeam: 2,
+  /** Crew agents working at once for full power — M3's k. At 1, scale buys
+   *  availability (someone is always working) rather than raw speed. */
+  crewPowerCap: 1,
+  /** Sliding window (seconds) the rolling uptime is measured over (M4). The
+   *  momentum dial: shorter is jumpier, longer is heavier. */
+  uptimeWindowSeconds: 90,
+  /** Car speed factor = uptimeFloor + uptimeSpan × rolling uptime (M4). */
+  uptimeFloor: 0.75,
+  uptimeSpan: 0.5,
+  /** Per-lap random jitter half-width. Multiplayer speed is earned via uptime;
+   *  randomness stays as flavor only (±5% against local's ±25%). */
+  paceJitterHalfWidth: 0.05,
+} as const;
+
 /** Pace multiplier for one official lap, sampled once and fixed for that lap. */
 export type RacePaceSource = (grandPrix: number, terminalID: string, lap: number) => number;
 
@@ -58,4 +78,11 @@ export const seededPace: RacePaceSource = (grandPrix, terminalID, lap) => {
   const mixed = ((hash ^ (hash >> 33n)) * 0xff51afd7ed558ccdn) & MASK_64;
   const unit = Number(mixed % 100000n) / 99999;
   return RaceRules.paceMin + unit * (RaceRules.paceMax - RaceRules.paceMin);
+};
+
+/** Multiplayer pace: the same seeded randomness squeezed into the jitter band.
+ *  Rank is meant to be earned through uptime (M3/M4); the dice only flavor. */
+export const multiplayerPace: RacePaceSource = (grandPrix, terminalID, lap) => {
+  const scale = MultiplayerRules.paceJitterHalfWidth / (RaceRules.paceMax - 1);
+  return 1 + (seededPace(grandPrix, terminalID, lap) - 1) * scale;
 };
