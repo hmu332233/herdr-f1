@@ -3,21 +3,24 @@ import type { WebSocket } from 'ws';
 import { createRaceBroadcaster } from '../broadcaster.js';
 import { webRootPath } from '../dashboard.js';
 import { createRaceSession } from '../race-session.js';
-import { multiplayerPace } from '../rules.js';
+import { continuousMultiplayerPace, multiplayerPace } from '../rules.js';
 import { startServer } from '../server.js';
-import { DEFAULT_VENUE_ID, venueLaps, type VenueID } from '../../shared/venues.js';
+import { DEFAULT_VENUE_ID, VENUES, venueLaps, type VenueID } from '../../shared/venues.js';
 import { createParticipantRegistry, type ParticipantRegistry } from './registry.js';
 import { decodeJoinMessage, MULTIPLAYER_PROTOCOL, type HostMessage } from './wire.js';
+import type { RaceMode } from '../../shared/presentation.js';
 
 const monotonicSeconds = (): number => performance.now() / 1000;
 
 export interface HostOptions {
   port: number;
-  /** The venue for the whole hosting session, chosen by whoever launches the
-   *  host. Pins the race distance and every viewer's drawing; viewers cannot
-   *  change it — they are anonymous, so a viewer write to shared race state
-   *  would be an open griefing channel (same reasoning that disables focus). */
+  /** The opening venue, when explicitly chosen by whoever launches the host.
+   *  Continuous mode otherwise starts randomly and rotates through a shuffle
+   *  bag. Classic keeps its original default venue. */
   circuit?: VenueID;
+  /** Random source injection for deterministic tests. */
+  random?: () => number;
+  raceMode?: RaceMode;
   /** Overridable so tests can host on loopback. Production hosts every
    *  interface — that is the whole point of the mode. */
   bindHost?: string;
@@ -37,19 +40,37 @@ export interface HostHandle {
  */
 export async function startHost(options: HostOptions): Promise<HostHandle> {
   const log = options.log ?? (() => {});
-  const circuit = options.circuit ?? DEFAULT_VENUE_ID;
+  const raceMode = options.raceMode ?? 'classic';
+  let circuit = options.circuit ?? (raceMode === 'continuous' ? randomVenue(options.random) : DEFAULT_VENUE_ID);
+  const venues = createVenueShuffleBag(circuit, options.random);
   // Multiplayer rank is earned through uptime (M3/M4); the seeded dice stay
   // as flavor only, so the session gets the narrowed pace source.
-  const session = createRaceSession(multiplayerPace);
-  const broadcaster = createRaceBroadcaster(session, monotonicSeconds, undefined, circuit);
-  // The venue is fixed for the whole hosting session; its published distance
-  // is the race distance from the first Grand Prix on.
+  const session = createRaceSession(
+    raceMode === 'continuous' ? continuousMultiplayerPace : multiplayerPace,
+    undefined,
+    { raceMode },
+  );
+  const broadcaster = createRaceBroadcaster(
+    session,
+    monotonicSeconds,
+    undefined,
+    () => circuit,
+    (grandPrix, now) => {
+      if (raceMode !== 'continuous') return;
+      circuit = venues.next();
+      session.setTotalLaps(venueLaps(circuit), now);
+      log(`Grand Prix ${grandPrix} · circuit ${circuit} (${venueLaps(circuit)} laps)`);
+    },
+  );
+  // The opening venue's published distance is race state from the first Grand
+  // Prix on. The broadcaster swaps both the drawing and distance at each later
+  // Grand Prix boundary.
   session.setTotalLaps(venueLaps(circuit), monotonicSeconds());
   // There is no herdr connection whose liveness could gate the clock; the
   // host's sources are the participants, so race time always flows.
   session.applyConnection({ kind: 'live' }, monotonicSeconds());
 
-  const registry = createParticipantRegistry();
+  const registry = createParticipantRegistry(raceMode);
   // publish runs inside join-socket message handlers, where a throw would be
   // an uncaught exception taking the whole party down. The known overflow is
   // the race grid's 99 car numbers (4+ participants at the per-participant
@@ -72,7 +93,7 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
     // Focus is inactive in multiplayer (design decision 4): the host cannot
     // know whose browser clicked, and relaying would let anyone on the
     // network shake someone else's terminal. Circuit writes are ignored for
-    // the same reason — the venue was pinned above, at launch.
+    // the same reason — venue rotation belongs to the host.
     onFocus: () => {},
     onCircuit: () => {},
     onJoin: socket => attachParticipant(socket, registry, publish, log),
@@ -96,6 +117,44 @@ export async function startHost(options: HostOptions): Promise<HostHandle> {
       await server.close();
     },
   };
+}
+
+/** Venue rotation for continuous mode: every circuit appears once per cycle,
+ * and the first circuit of a new cycle cannot repeat the previous one. */
+export function createVenueShuffleBag(opening: VenueID, random: () => number = Math.random) {
+  let previous = opening;
+  let bag = shuffle(VENUES.map(venue => venue.id).filter(id => id !== opening), random);
+
+  function next(): VenueID {
+    if (bag.length === 0) {
+      bag = shuffle(VENUES.map(venue => venue.id), random);
+      if (bag[0] === previous && bag.length > 1) [bag[0], bag[1]] = [bag[1], bag[0]];
+    }
+    previous = bag.shift()!;
+    return previous;
+  }
+  return { next };
+}
+
+/** Backwards-compatible one-shot helper. Rotation itself uses the persistent
+ * shuffle bag above so a whole cycle cannot repeat a venue. */
+export function randomNextVenue(current: VenueID, random: () => number = Math.random): VenueID {
+  return createVenueShuffleBag(current, random).next();
+}
+
+function shuffle(values: VenueID[], random: () => number): VenueID[] {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swap = Math.min(index, Math.max(0, Math.floor(random() * (index + 1))));
+    [result[index], result[swap]] = [result[swap], result[index]];
+  }
+  return result;
+}
+
+/** Picks the opening venue when the host command did not specify one. */
+export function randomVenue(random: () => number = Math.random): VenueID {
+  const index = Math.min(VENUES.length - 1, Math.max(0, Math.floor(random() * VENUES.length)));
+  return VENUES[index].id;
 }
 
 /** Per-socket handshake and message pump for one joining participant. */
@@ -156,16 +215,24 @@ function attachParticipant(
     if (name === null) return;
     registry.disconnect(name, monotonicSeconds());
     publish();
-    log(`${name} disconnected — cars to the pit lane (rejoin with the same name to resume)`);
+    log(`${name} disconnected — team telemetry offline (rejoin with the same name to resume)`);
   });
   socket.on('error', () => {}); // 'close' always follows; nothing extra to do
 }
 
 /** Foreground CLI runner (design decision 9): prints where to point browsers
  *  and join clients, then hosts until Ctrl+C. */
-export async function runHost(port: number, circuit: VenueID): Promise<void> {
-  const host = await startHost({ port, circuit, log: line => console.log(line) });
-  console.log(`Herdr F1 multiplayer host · port ${host.port} · circuit ${circuit} (${venueLaps(circuit)} laps)`);
+export async function runHost(
+  port: number,
+  circuit?: VenueID,
+  raceMode: RaceMode = 'classic',
+): Promise<void> {
+  const openingCircuit = circuit ?? (raceMode === 'continuous' ? randomVenue() : DEFAULT_VENUE_ID);
+  const host = await startHost({ port, circuit: openingCircuit, raceMode, log: line => console.log(line) });
+  console.log(
+    `Herdr F1 multiplayer host · ${raceMode} race · port ${host.port} · ` +
+    `opening circuit ${openingCircuit} (${venueLaps(openingCircuit)} laps)`,
+  );
   for (const address of viewerAddresses()) {
     console.log(`  view    http://${address}:${host.port}`);
   }

@@ -75,10 +75,10 @@ circuitSelect.addEventListener('change', () => {
   if (sync) track.frame(performance.now());
 });
 
-/** Multiplayer: the venue is pinned when the host is launched, so every viewer
- *  watches the same circuit and the selector is locked — viewers are anonymous
- *  and shared race state accepts no anonymous writes. Local mode syncs carry no
- *  circuitID and the selector stays a per-browser choice. */
+/** Multiplayer: the host owns the venue, so every viewer follows the same
+ *  circuit as it rotates between races and the selector is locked — viewers
+ *  are anonymous and shared race state accepts no anonymous writes. Local mode
+ *  syncs carry no circuitID and the selector stays a per-browser choice. */
 function followPinnedCircuit(circuitID: string | undefined): void {
   if (circuitID === undefined) return;
   if (track.currentCircuitID() !== circuitID) {

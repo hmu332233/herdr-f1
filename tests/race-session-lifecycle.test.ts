@@ -25,6 +25,36 @@ describe('identity', () => {
     expect(pattern).toHaveLength(overflow);
   });
 
+  it('hands early teams the palette max-contrast sequence instead of hash-neighbor colors', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(
+      team('zulu', 'zulu', [agent('t-z', 'working')]),
+      team('alpha', 'alpha', [agent('t-a', 'working')]),
+      team('mike', 'mike', [agent('t-m', 'working')]),
+      team('bravo', 'bravo', [agent('t-b', 'working')]),
+    ));
+
+    const slots = new Map(session.presentation().teams.map(team => [team.id, team.colorToken.slot]));
+    expect(slots).toEqual(new Map([
+      ['alpha', 0], ['bravo', 1], ['mike', 2], ['zulu', 3],
+    ]));
+  });
+
+  it('gives later arrivals the next distinct color without changing existing teams', () => {
+    const session = createRaceSession(() => 1);
+    goLive(session, snap(team('alpha', 'alpha', [agent('t-a', 'working')])));
+    const original = session.presentation().teams[0].colorToken;
+
+    session.applySnapshot(snap(
+      team('alpha', 'alpha', [agent('t-a', 'working')]),
+      team('bravo', 'bravo', [agent('t-b', 'working')]),
+    ), 1);
+
+    const tokens = new Map(session.presentation().teams.map(team => [team.id, team.colorToken]));
+    expect(tokens.get('alpha')).toEqual(original);
+    expect(tokens.get('bravo')).toEqual({ kind: 'palette', slot: 1 });
+  });
+
   it('keeps identity stable across snapshots', () => {
     const session = createRaceSession(() => 1);
     goLive(session, snap(team('ws-1', 'alpha', [agent('t1', 'working')])));

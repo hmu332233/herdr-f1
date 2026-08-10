@@ -26,8 +26,8 @@ export const RaceRules = {
    *  match the motion they watched. */
   safetyCarFactor: 0.4,
   /** Number of distinct constructor liveries available. Must match the length
-   *  of palette.teamColors on the client: slots are handed out against this
-   *  count, and teams beyond it fall back to pattern outlines. */
+   *  of palette.teamColors on the client: slots are handed out in the palette's
+   *  max-contrast order, and teams beyond it fall back to pattern outlines. */
   paletteSize: 11,
   maximumGridNumber: 99,
   /** Team radio lines retained per Grand Prix; older ones fall off the back. */
@@ -65,6 +65,15 @@ export const MultiplayerRules = {
   /** Per-lap random jitter half-width. Multiplayer speed is earned via uptime;
    *  randomness stays as flavor only (±5% against local's ±25%). */
   paceJitterHalfWidth: 0.05,
+  /** Continuous mode keeps state and uptime legible by narrowing flavour. */
+  continuousPaceJitterHalfWidth: 0.02,
+  cruisingFactor: 0.75,
+  safetyCarLeaderFactor: 0.4,
+  safetyCarCatchupFactor: 0.8,
+  /** Approximate 1.5 marker lengths as a fraction of a lap. */
+  safetyCarQueueGap: 0.025,
+  safetyCarCatchupRange: 0.25,
+  greenFlagDuration: 3,
 } as const;
 
 /** Pace multiplier for one official lap, sampled once and fixed for that lap. */
@@ -84,5 +93,10 @@ export const seededPace: RacePaceSource = (grandPrix, terminalID, lap) => {
  *  Rank is meant to be earned through uptime (M3/M4); the dice only flavor. */
 export const multiplayerPace: RacePaceSource = (grandPrix, terminalID, lap) => {
   const scale = MultiplayerRules.paceJitterHalfWidth / (RaceRules.paceMax - 1);
+  return 1 + (seededPace(grandPrix, terminalID, lap) - 1) * scale;
+};
+
+export const continuousMultiplayerPace: RacePaceSource = (grandPrix, terminalID, lap) => {
+  const scale = MultiplayerRules.continuousPaceJitterHalfWidth / (RaceRules.paceMax - 1);
   return 1 + (seededPace(grandPrix, terminalID, lap) - 1) * scale;
 };

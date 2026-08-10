@@ -1,6 +1,18 @@
 /** Authoritative herdr agent status. Only these four states become race entries. */
 export type AgentStatus = 'idle' | 'working' | 'done' | 'blocked';
 
+export type RaceMode = 'classic' | 'continuous';
+
+/** Aggregate state of a multiplayer vehicle crew. */
+export type CrewState = AgentStatus | 'cruising';
+
+export interface CrewCounts {
+  working: number;
+  idle: number;
+  done: number;
+  blocked: number;
+}
+
 export type ConnectionState =
   | { kind: 'waiting' }
   | { kind: 'live' }
@@ -10,7 +22,7 @@ export type ConnectionState =
 export type RacePhase = 'awaitingGrid' | 'live' | 'podium';
 
 /** Stable team visual identity. `pattern` reuses a hue with a distinct
- *  outline treatment once the 12-color palette is exhausted. */
+ *  outline treatment once the 11-color palette is exhausted. */
 export interface TeamColorToken {
   kind: 'palette' | 'pattern';
   slot: number;
@@ -43,6 +55,17 @@ export type FlagState =
       terminalIDs: string[];
     };
 
+export type RaceControlState =
+  | { kind: 'green' }
+  | {
+      kind: 'safetyCar';
+      phase: 'deployed' | 'inThisLap';
+      terminalIDs: string[];
+      /** Fractional circuit position of the SC. Null once it has entered pit. */
+      safetyCarProgress: number | null;
+    }
+  | { kind: 'greenFlag' };
+
 /** Full-screen connection/race condition layered over the race phase. */
 export type RaceOverlay =
   | { kind: 'none' }
@@ -60,6 +83,11 @@ export interface EntryPresentation {
   tabLabel: string;
   agentKind: string;
   status: AgentStatus;
+  /** Exact aggregate crew state and counts. Local/classic entries use a
+   *  one-agent projection, so the fields remain useful without special cases. */
+  crewState: CrewState;
+  crewCounts: CrewCounts;
+  isLastKnown: boolean;
   colorToken: TeamColorToken;
   /** Official fractional laps. Owns rank, lap labels, gap, and finish. */
   officialDistance: number;
@@ -122,6 +150,8 @@ export interface TeamStanding {
   /** `—` for the leader; `+x.xs` under one lap, `+x.x LAPS` otherwise. */
   gapText: string;
   entries: EntryPresentation[];
+  isOffline: boolean;
+  blockedCount: number;
 }
 
 export interface PodiumTeam {
@@ -139,6 +169,7 @@ export interface PodiumResult {
 /** The complete externally observable race state. The browser renders this;
  *  tests assert on it. */
 export interface RacePresentation {
+  raceMode: RaceMode;
   phase: RacePhase;
   grandPrix: number;
   /** One-based leader lap for the `LAP n / totalLaps` header, capped at it. */
@@ -153,6 +184,7 @@ export interface RacePresentation {
   overlay: RaceOverlay;
   /** Track condition. Yellow while any car is stopped on the circuit. */
   flag: FlagState;
+  raceControl: RaceControlState;
   /** Recent team radio, oldest first, capped at RaceRules.radioHistoryLimit.
    *  Sync carries the whole window rather than deltas, so a reconnecting or
    *  reloading browser recovers the backlog for free. */

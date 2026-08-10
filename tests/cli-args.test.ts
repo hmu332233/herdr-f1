@@ -22,9 +22,11 @@ describe('parseArgs', () => {
     }
   });
   it('parses the multiplayer host command', () => {
-    expect(parseArgs(['host'], {})).toEqual({ kind: 'host', port: 4158, circuit: 'herdr' });
-    expect(parseArgs(['host', '--port', '5000'], {})).toEqual({ kind: 'host', port: 5000, circuit: 'herdr' });
-    expect(parseArgs(['host', '--circuit', 'suzuka'], {})).toEqual({ kind: 'host', port: 4158, circuit: 'suzuka' });
+    expect(parseArgs(['host'], {})).toEqual({ kind: 'host', port: 4158, raceMode: 'classic' });
+    expect(parseArgs(['host', '--port', '5000'], {})).toEqual({ kind: 'host', port: 5000, raceMode: 'classic' });
+    expect(parseArgs(['host', '--circuit', 'suzuka'], {})).toEqual({ kind: 'host', port: 4158, circuit: 'suzuka', raceMode: 'classic' });
+    expect(parseArgs(['host', '--race-mode', 'continuous'], {}))
+      .toEqual({ kind: 'host', port: 4158, raceMode: 'continuous' });
   });
   it('parses join targets, names, and socket precedence', () => {
     expect(parseArgs(['join', '192.168.0.5', '--name', ' mark '], {})).toEqual({
@@ -47,7 +49,8 @@ describe('parseArgs', () => {
       ['join', 'h', '--name', 'x'.repeat(25)], ['join', 'h:99999', '--name', 'x'], ['join', 'h:', '--name', 'x'],
       ['join', 'h', 'extra', '--name', 'x'], ['join', 'h', '--name', 'x', '--port', '4200'],
       ['join', 'h', '--name', 'x', '--fixture', 'grid'], ['start', '--name', 'x'],
-      ['host', '--circuit', 'nope'], ['start', '--circuit', 'suzuka'], ['join', 'h', '--name', 'x', '--circuit', 'suzuka'],
+      ['host', '--circuit', 'nope'], ['host', '--race-mode', 'endless'], ['start', '--race-mode', 'continuous'],
+      ['start', '--circuit', 'suzuka'], ['join', 'h', '--name', 'x', '--circuit', 'suzuka'],
     ]) {
       expect(() => parseArgs(argv, {}), argv.join(' ')).toThrowError(/^Usage:/);
     }

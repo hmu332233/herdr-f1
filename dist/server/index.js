@@ -5205,12 +5205,17 @@ const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(impor
  * fans full sync messages out to connected browsers.
  */
 function createRaceBroadcaster(session, clock, tickMs = 250, 
-/** Multiplayer only: the venue pinned at host launch, stamped on every sync
- *  so viewers render it and lock their selector. Local mode leaves the
- *  circuit to each browser and omits it. */
-pinnedCircuitID) {
+/** Multiplayer only: the host-owned venue stamped on every sync so viewers
+ *  render it and lock their selector. A getter lets the host rotate venues
+ *  between Grands Prix. Local mode omits it. */
+circuitID,
+/** Called once after the session advances onto a new Grand Prix. Multiplayer
+ *  uses this boundary to choose the next venue and update its race distance
+ *  before the first sync for that Grand Prix is built. */
+onGrandPrixStart) {
     let timer = null;
     const clients = new Set();
+    let observedGrandPrix = session.presentation().grandPrix;
     function start() {
         if (timer)
             return;
@@ -5226,7 +5231,8 @@ pinnedCircuitID) {
         clients.add(send);
         const now = clock();
         session.advance(now);
-        const sync = buildSync();
+        observeGrandPrix(now);
+        const sync = buildSync(now);
         send(JSON.stringify(sync));
     }
     function removeClient(send) {
@@ -5236,16 +5242,28 @@ pinnedCircuitID) {
     function tick() {
         const now = clock();
         session.advance(now);
+        observeGrandPrix(now);
         if (clients.size === 0)
             return; // race continues; nothing to fan out
-        const json = JSON.stringify(buildSync());
+        const json = JSON.stringify(buildSync(now));
         for (const send of clients)
             send(json);
     }
-    function buildSync() {
-        return pinnedCircuitID === undefined
+    function observeGrandPrix(now) {
+        const grandPrix = session.presentation().grandPrix;
+        if (grandPrix === observedGrandPrix)
+            return;
+        observedGrandPrix = grandPrix;
+        onGrandPrixStart?.(grandPrix, now);
+    }
+    function buildSync(now = clock()) {
+        // buildSync is public for diagnostics/tests and may be called after some
+        // other session input crossed the boundary between broadcaster ticks.
+        observeGrandPrix(now);
+        const currentCircuitID = typeof circuitID === 'function' ? circuitID() : circuitID;
+        return currentCircuitID === undefined
             ? { type: 'sync', ...session.presentation() }
-            : { type: 'sync', circuitID: pinnedCircuitID, ...session.presentation() };
+            : { type: 'sync', circuitID: currentCircuitID, ...session.presentation() };
     }
     return { start, stop, addClient, removeClient, tick, buildSync };
 }
@@ -5279,8 +5297,8 @@ const RaceRules = {
      *  match the motion they watched. */
     safetyCarFactor: 0.4,
     /** Number of distinct constructor liveries available. Must match the length
-     *  of palette.teamColors on the client: slots are handed out against this
-     *  count, and teams beyond it fall back to pattern outlines. */
+     *  of palette.teamColors on the client: slots are handed out in the palette's
+     *  max-contrast order, and teams beyond it fall back to pattern outlines. */
     paletteSize: 11,
     maximumGridNumber: 99,
     /** Team radio lines retained per Grand Prix; older ones fall off the back. */
@@ -5315,6 +5333,15 @@ const MultiplayerRules = {
     /** Per-lap random jitter half-width. Multiplayer speed is earned via uptime;
      *  randomness stays as flavor only (±5% against local's ±25%). */
     paceJitterHalfWidth: 0.05,
+    /** Continuous mode keeps state and uptime legible by narrowing flavour. */
+    continuousPaceJitterHalfWidth: 0.02,
+    cruisingFactor: 0.75,
+    safetyCarLeaderFactor: 0.4,
+    safetyCarCatchupFactor: 0.8,
+    /** Approximate 1.5 marker lengths as a fraction of a lap. */
+    safetyCarQueueGap: 0.025,
+    safetyCarCatchupRange: 0.25,
+    greenFlagDuration: 3,
 };
 /** Production pace: seeded pseudo-random, reproducible across launches for
  *  the same grand prix sequence and terminal, varying lap to lap. */
@@ -5329,6 +5356,10 @@ const seededPace = (grandPrix, terminalID, lap) => {
  *  Rank is meant to be earned through uptime (M3/M4); the dice only flavor. */
 const multiplayerPace = (grandPrix, terminalID, lap) => {
     const scale = MultiplayerRules.paceJitterHalfWidth / (RaceRules.paceMax - 1);
+    return 1 + (seededPace(grandPrix, terminalID, lap) - 1) * scale;
+};
+const continuousMultiplayerPace = (grandPrix, terminalID, lap) => {
+    const scale = MultiplayerRules.continuousPaceJitterHalfWidth / (RaceRules.paceMax - 1);
     return 1 + (seededPace(grandPrix, terminalID, lap) - 1) * scale;
 };
 
@@ -5881,7 +5912,8 @@ function createRaceSession(paceSource = seededPace,
 /** Wall clock used only to stamp team radio. The race itself runs on the
  *  monotonic clock passed to advance(); this is injected separately so tests
  *  get stable timestamps. */
-wallClock = () => new Date()) {
+wallClock = () => new Date(), options = {}) {
+    const raceMode = options.raceMode ?? 'classic';
     let lastTick = null;
     /** Race distance for the circuit currently being raced. Session state rather
      *  than a constant, because each venue has its own published distance and the
@@ -5895,6 +5927,11 @@ wallClock = () => new Date()) {
     let connection = { kind: 'waiting' };
     let hasSnapshot = false;
     let frozenPodium = null;
+    let controlPhase = 'green';
+    let safetyQueue = [];
+    let safetyCarDistance = 0;
+    let withdrawalLine = 0;
+    let greenFlagUntil = 0;
     const entries = new Map();
     let nextBootstrapIndex = 0;
     /** Terminals present in the most recent authoritative snapshot. Absence
@@ -5950,7 +5987,10 @@ wallClock = () => new Date()) {
                 return;
             case 'live':
                 raceTime += elapsed;
-                scoreLive(elapsed);
+                if (raceMode === 'continuous')
+                    scoreContinuous(elapsed);
+                else
+                    scoreLive(elapsed);
                 return;
             case 'podium':
                 raceTime += elapsed;
@@ -6003,6 +6043,103 @@ wallClock = () => new Date()) {
         if (finisher !== null)
             finishGrandPrix();
     }
+    function scoreContinuous(elapsed) {
+        if (controlPhase === 'greenFlag' && raceTime >= greenFlagUntil)
+            controlPhase = 'green';
+        if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+            scoreSafetyCar(elapsed);
+            return;
+        }
+        scoreContinuousGreen(elapsed);
+    }
+    function scoreContinuousGreen(elapsed) {
+        let earliestFinish = elapsed;
+        let finisher = null;
+        for (const entry of entries.values()) {
+            if (!isContinuousRunner(entry))
+                continue;
+            const official = { value: entry.official };
+            const pace = { ...entry.pace };
+            const unused = walk(official, pace, entry.terminalID, elapsed, continuousNormalFactor(entry));
+            if (official.value >= totalLaps) {
+                const finishTime = elapsed - unused;
+                if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
+                    earliestFinish = finishTime;
+                    finisher = entry.terminalID;
+                }
+            }
+        }
+        const budget = finisher === null ? elapsed : earliestFinish;
+        for (const entry of entries.values()) {
+            if (!isContinuousRunner(entry))
+                continue;
+            const official = { value: entry.official };
+            walk(official, entry.pace, entry.terminalID, budget, continuousNormalFactor(entry));
+            entry.official = official.value;
+            entry.display = official.value;
+        }
+        if (finisher !== null)
+            finishGrandPrix();
+    }
+    function scoreSafetyCar(elapsed) {
+        const leader = safetyQueue.length > 0 ? entries.get(safetyQueue[0]) : undefined;
+        let neutralized = elapsed;
+        let greenRemainder = 0;
+        if (controlPhase === 'inThisLap' && leader) {
+            const secondsToLine = Math.max(0, (withdrawalLine - leader.official) /
+                (RaceRules.baseSpeed * MultiplayerRules.safetyCarLeaderFactor));
+            if (secondsToLine <= elapsed) {
+                neutralized = secondsToLine;
+                greenRemainder = elapsed - secondsToLine;
+            }
+        }
+        advanceSafetyQueue(neutralized);
+        if ([...entries.values()].some(entry => entry.official >= totalLaps && isContinuousRunner(entry))) {
+            finishGrandPrix();
+            return;
+        }
+        if (greenRemainder > 0 || (controlPhase === 'inThisLap' && leader?.official === withdrawalLine)) {
+            controlPhase = 'greenFlag';
+            greenFlagUntil = raceTime - greenRemainder + MultiplayerRules.greenFlagDuration;
+            safetyQueue = [];
+            if (greenRemainder > 0)
+                scoreContinuousGreen(greenRemainder);
+        }
+    }
+    function advanceSafetyQueue(elapsed) {
+        if (elapsed <= 0)
+            return;
+        safetyCarDistance += RaceRules.baseSpeed * MultiplayerRules.safetyCarLeaderFactor * elapsed;
+        let ahead = null;
+        for (const id of safetyQueue) {
+            const entry = entries.get(id);
+            if (!entry || !isContinuousRunner(entry))
+                continue;
+            const factor = ahead === null
+                ? MultiplayerRules.safetyCarLeaderFactor
+                : safetyCarFollowerFactor(ahead, entry);
+            const proposed = entry.official + RaceRules.baseSpeed * factor * elapsed;
+            entry.official = ahead === null
+                ? proposed
+                : Math.max(entry.official, Math.min(proposed, ahead.official - MultiplayerRules.safetyCarQueueGap));
+            entry.display = entry.official;
+            ahead = entry;
+        }
+    }
+    function safetyCarFollowerFactor(ahead, entry) {
+        const excess = Math.max(0, ahead.official - entry.official - MultiplayerRules.safetyCarQueueGap);
+        const ratio = Math.min(1, excess / MultiplayerRules.safetyCarCatchupRange);
+        return MultiplayerRules.safetyCarLeaderFactor
+            + ratio * (MultiplayerRules.safetyCarCatchupFactor - MultiplayerRules.safetyCarLeaderFactor);
+    }
+    function isContinuousRunner(entry) {
+        return !entry.isRetired && !entry.isQueuedNextGrid && !isLiveBlocked(entry);
+    }
+    function continuousNormalFactor(entry) {
+        if (entry.isLastKnown || entry.crewState !== 'working')
+            return MultiplayerRules.cruisingFactor;
+        return Math.min(1.25, Math.max(1, entry.externalPace));
+    }
     function isDriving(entry) {
         return entry.status === 'working' && !entry.isRetired && !entry.isQueuedNextGrid;
     }
@@ -6014,10 +6151,18 @@ wallClock = () => new Date()) {
      *  circuit at all; a race would otherwise stay permanently yellow for a
      *  terminal that has already gone away. */
     function causesYellowFlag(entry) {
+        if (raceMode === 'continuous')
+            return isLiveBlocked(entry);
         return entry.status === 'blocked'
             && !entry.isRetired
             && !entry.isQueuedNextGrid
             && !entry.incidentInPit;
+    }
+    function isLiveBlocked(entry) {
+        return entry.crewState === 'blocked'
+            && !entry.isLastKnown
+            && !entry.isRetired
+            && !entry.isQueuedNextGrid;
     }
     /** True while any car is stopped on the circuit. Read once per scoring step
      *  and once per presentation, so the pace the field runs at and the flag the
@@ -6072,7 +6217,11 @@ wallClock = () => new Date()) {
         for (const entry of entries.values()) {
             if (entry.isRetired || entry.isQueuedNextGrid)
                 continue;
-            if (entry.status !== 'working' && entry.status !== 'done')
+            if (raceMode === 'continuous') {
+                if (isLiveBlocked(entry))
+                    continue;
+            }
+            else if (entry.status !== 'working' && entry.status !== 'done')
                 continue;
             entry.display += elapsed * RaceRules.baseSpeed * RaceRules.doneCooldownFactor;
         }
@@ -6117,6 +6266,11 @@ wallClock = () => new Date()) {
         podiumElapsed = 0;
         // Radio belongs to the Grand Prix that produced it.
         radio = [];
+        controlPhase = 'green';
+        safetyQueue = [];
+        safetyCarDistance = 0;
+        withdrawalLine = 0;
+        greenFlagUntil = 0;
         const orderedIDs = [...entries.keys()].sort((a, b) => compareOrderKeys(orderKey(entries.get(a)), orderKey(entries.get(b))));
         const circulating = [];
         for (const id of orderedIDs) {
@@ -6127,8 +6281,9 @@ wallClock = () => new Date()) {
             entry.isQueuedNextGrid = false;
             entry.newStintUntil = null;
             entry.incidentInPit = false;
-            if (entry.status === 'done' || entry.status === 'blocked')
+            if (raceMode === 'classic' && (entry.status === 'done' || entry.status === 'blocked')) {
                 circulating.push(id);
+            }
         }
         // Done cooldown and incident markers restart on deterministic,
         // non-overlapping display positions around the circuit.
@@ -6221,9 +6376,13 @@ wallClock = () => new Date()) {
             if (announces)
                 emitRadio(entry, 'retired');
         }
+        if (raceMode === 'continuous' && phase === 'live')
+            refreshContinuousControl();
         if (bootstrapping) {
             phase = 'live';
             resetGrid();
+            if (raceMode === 'continuous')
+                refreshContinuousControl();
         }
     }
     function updateEntry(agent, teamID, announces) {
@@ -6255,6 +6414,9 @@ wallClock = () => new Date()) {
             if (announces && kind !== null)
                 emitRadio(entry, kind);
         }
+        entry.crewState = agent.crewState ?? agent.status;
+        entry.crewCounts = agent.crewCounts ?? countsForStatus(agent.status);
+        entry.isLastKnown = agent.isLastKnown ?? false;
         entry.tabLabel = agent.tabLabel;
         entry.agentKind = agent.agentKind;
         entry.isFocused = agent.isFocused;
@@ -6268,6 +6430,9 @@ wallClock = () => new Date()) {
             agentKind: agent.agentKind,
             sessionReference: agent.agentSessionReference,
             status: agent.status,
+            crewState: agent.crewState ?? agent.status,
+            crewCounts: agent.crewCounts ?? countsForStatus(agent.status),
+            isLastKnown: agent.isLastKnown ?? false,
             isFocused: agent.isFocused,
             official: 0,
             display: 0,
@@ -6293,6 +6458,56 @@ wallClock = () => new Date()) {
         }
         entries.set(agent.terminalID, entry);
     }
+    function refreshContinuousControl() {
+        const blocked = [...entries.values()].filter(isLiveBlocked);
+        if (blocked.length > 0) {
+            if (controlPhase === 'green' || controlPhase === 'greenFlag') {
+                safetyQueue = runningOrder();
+                const leader = safetyQueue.length > 0 ? entries.get(safetyQueue[0]) : undefined;
+                safetyCarDistance = (leader?.official ?? Math.max(0, ...blocked.map(entry => entry.official)))
+                    + MultiplayerRules.safetyCarQueueGap;
+            }
+            else {
+                safetyQueue = safetyQueue.filter(id => {
+                    const entry = entries.get(id);
+                    return entry !== undefined && isContinuousRunner(entry);
+                });
+                appendMissingQueueRunners();
+            }
+            controlPhase = 'deployed';
+            return;
+        }
+        if (controlPhase === 'deployed') {
+            appendMissingQueueRunners();
+            const leader = safetyQueue.length > 0 ? entries.get(safetyQueue[0]) : undefined;
+            withdrawalLine = leader ? Math.floor(leader.official) + 1 : 0;
+            controlPhase = leader ? 'inThisLap' : 'greenFlag';
+            if (!leader)
+                greenFlagUntil = raceTime + MultiplayerRules.greenFlagDuration;
+            return;
+        }
+        if (controlPhase === 'inThisLap')
+            appendMissingQueueRunners();
+    }
+    function runningOrder() {
+        return [...entries.values()]
+            .filter(isContinuousRunner)
+            .sort((a, b) => b.official - a.official || compareOrderKeys(orderKey(a), orderKey(b)))
+            .map(entry => entry.terminalID);
+    }
+    function appendMissingQueueRunners() {
+        const present = new Set(safetyQueue);
+        const missing = runningOrder().filter(id => !present.has(id));
+        for (const id of missing) {
+            const entry = entries.get(id);
+            const tail = safetyQueue.length > 0 ? entries.get(safetyQueue[safetyQueue.length - 1]) : undefined;
+            if (tail) {
+                entry.official = Math.max(0, tail.official - MultiplayerRules.safetyCarQueueGap);
+                entry.display = entry.official;
+            }
+            safetyQueue.push(id);
+        }
+    }
     // MARK: - Identity assignment
     function assignNumber(terminalID) {
         const existing = numberAssignments.get(terminalID);
@@ -6310,14 +6525,16 @@ wallClock = () => new Date()) {
         throw new Error(`grid is limited to ${RaceRules.maximumGridNumber} cars`);
     }
     function assignTeamTokens(ids) {
-        // Existing assignments are preserved; only unseen teams (sorted by
-        // workspace ID for determinism) probe for a free palette slot.
+        // Existing assignments are preserved. The palette itself is ordered as a
+        // max-contrast sequence, so handing out the first free slot makes a small
+        // field much easier to scan than starting from an arbitrary hash (which
+        // could give the first two teams neighboring blues or reds). Sorting a
+        // batch keeps bootstrap assignment deterministic; later arrivals take the
+        // next visually distinct slot without changing anyone already racing.
         const unseen = ids.filter(id => !teamTokens.has(id)).sort(compareStrings);
         for (const id of unseen) {
-            const preferred = Number(stableHash(id) % BigInt(RaceRules.paletteSize));
             let assigned = null;
-            for (let probe = 0; probe < RaceRules.paletteSize; probe += 1) {
-                const slot = (preferred + probe) % RaceRules.paletteSize;
+            for (let slot = 0; slot < RaceRules.paletteSize; slot += 1) {
                 if (!usedPaletteSlots.has(slot)) {
                     assigned = slot;
                     break;
@@ -6337,6 +6554,7 @@ wallClock = () => new Date()) {
         const teams = rankedTeams();
         const currentOverlay = overlay();
         return {
+            raceMode,
             phase: phase,
             grandPrix: grandPrix,
             headerLap: headerLap(),
@@ -6346,8 +6564,29 @@ wallClock = () => new Date()) {
             connection: connection,
             overlay: currentOverlay,
             flag: flag(teams),
+            raceControl: raceControl(teams),
             radio: [...radio],
         };
+    }
+    function raceControl(teams) {
+        if (raceMode !== 'continuous')
+            return { kind: 'green' };
+        if (controlPhase === 'greenFlag')
+            return { kind: 'greenFlag' };
+        if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+            const terminalIDs = teams.flatMap(team => team.entries)
+                .filter(entry => entry.causesYellowFlag)
+                .map(entry => entry.id);
+            return {
+                kind: 'safetyCar',
+                phase: controlPhase,
+                terminalIDs,
+                safetyCarProgress: controlPhase === 'deployed'
+                    ? safetyCarDistance - Math.floor(safetyCarDistance)
+                    : null,
+            };
+        }
+        return { kind: 'green' };
     }
     /** Track condition, read off the entries already presented so the flag and
      *  the cars flagged can never disagree. Standings order carries through,
@@ -6403,6 +6642,8 @@ wallClock = () => new Date()) {
             distance: teamGroup.distance,
             distanceText: `${teamGroup.distance.toFixed(1)} LAPS`,
             gapText: index === 0 ? '—' : gapText(leaderDistance - teamGroup.distance),
+            isOffline: teamGroup.members.every(entry => entry.isLastKnown),
+            blockedCount: teamGroup.members.filter(entry => isLiveBlocked(entry)).length,
             entries: teamGroup.members
                 .slice()
                 .sort((a, b) => quantized(b.official) - quantized(a.official) ||
@@ -6423,6 +6664,16 @@ wallClock = () => new Date()) {
         else if (entry.isRetired) {
             placement = { kind: 'retired' };
             statusText = `RETIRED · LAP ${lap}`;
+        }
+        else if (raceMode === 'continuous') {
+            if (isLiveBlocked(entry)) {
+                placement = { kind: 'incidentTrack', progress };
+                statusText = `INCIDENT · LAP ${lap}`;
+            }
+            else {
+                placement = { kind: 'track', progress };
+                statusText = `LAP ${lap}`;
+            }
         }
         else {
             switch (entry.status) {
@@ -6452,6 +6703,9 @@ wallClock = () => new Date()) {
             tabLabel: entry.tabLabel,
             agentKind: entry.agentKind,
             status: entry.status,
+            crewState: entry.crewState,
+            crewCounts: { ...entry.crewCounts },
+            isLastKnown: entry.isLastKnown,
             colorToken: teamTokens.get(entry.teamID) ?? { kind: 'palette', slot: 0 },
             officialDistance: entry.official,
             lap,
@@ -6471,6 +6725,24 @@ wallClock = () => new Date()) {
         if (entry.isRetired || entry.isQueuedNextGrid)
             return 0;
         if (phase === 'live') {
+            if (raceMode === 'continuous') {
+                if (!isContinuousRunner(entry))
+                    return 0;
+                if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+                    const index = safetyQueue.indexOf(entry.terminalID);
+                    if (index < 0)
+                        return 0;
+                    if (index === 0)
+                        return RaceRules.baseSpeed * MultiplayerRules.safetyCarLeaderFactor;
+                    const ahead = entries.get(safetyQueue[index - 1]);
+                    return RaceRules.baseSpeed * (ahead
+                        ? safetyCarFollowerFactor(ahead, entry)
+                        : MultiplayerRules.safetyCarLeaderFactor);
+                }
+                return RaceRules.baseSpeed
+                    * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
+                    * continuousNormalFactor(entry);
+            }
             if (entry.status === 'working') {
                 return RaceRules.baseSpeed
                     * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
@@ -6565,6 +6837,14 @@ function compareStrings(a, b) {
 }
 function compareOrderKeys(a, b) {
     return a[0] - b[0] || a[1] - b[1] || compareStrings(a[2], b[2]);
+}
+function countsForStatus(status) {
+    return {
+        working: status === 'working' ? 1 : 0,
+        idle: status === 'idle' ? 1 : 0,
+        done: status === 'done' ? 1 : 0,
+        blocked: status === 'blocked' ? 1 : 0,
+    };
 }
 
 ;// CONCATENATED MODULE: external "node:http"
@@ -7080,17 +7360,17 @@ function createUptimeTracker(windowSeconds) {
 
 ;// CONCATENATED MODULE: ./src/server/multiplayer/wire.ts
 /** join↔host protocol version. Mismatches are rejected with a clear error at
- *  the handshake, mirroring the herdr protocol policy. v2 is the two-car
- *  paddock (design decisions M1–M8): per-crew aggregates instead of per-agent
- *  rows. */
-const MULTIPLAYER_PROTOCOL = 2;
+ *  the handshake, mirroring the herdr protocol policy. v3 carries a complete
+ *  aggregate state partition for each two-car crew, still without per-agent
+ *  rows or identities. */
+const MULTIPLAYER_PROTOCOL = 3;
 const CREWS_PER_TEAM = 2;
 const NAME_LENGTH_LIMIT = 24;
 function emptyCounters() {
     return { incidents: 0, recoveries: 0, pits: 0, greens: 0, chequered: 0, stints: 0 };
 }
 function emptyCrewReport() {
-    return { size: 0, working: 0, blocked: 0, counters: emptyCounters() };
+    return { size: 0, working: 0, idle: 0, done: 0, blocked: 0, counters: emptyCounters() };
 }
 const COUNTER_KEYS = ['incidents', 'recoveries', 'pits', 'greens', 'chequered', 'stints'];
 const CREW_SIZE_LIMIT = 999;
@@ -7144,10 +7424,11 @@ function decodeCrew(value) {
     const size = boundedCount(crew.size, CREW_SIZE_LIMIT);
     const working = boundedCount(crew.working, CREW_SIZE_LIMIT);
     const blocked = boundedCount(crew.blocked, CREW_SIZE_LIMIT);
-    if (size === null || working === null || blocked === null)
+    const idle = boundedCount(crew.idle, CREW_SIZE_LIMIT);
+    const done = boundedCount(crew.done, CREW_SIZE_LIMIT);
+    if (size === null || working === null || idle === null || done === null || blocked === null)
         return null;
-    // working and blocked are disjoint subsets of the crew.
-    if (working + blocked > size)
+    if (working + idle + done + blocked !== size)
         return null;
     if (typeof crew.counters !== 'object' || crew.counters === null)
         return null;
@@ -7159,7 +7440,7 @@ function decodeCrew(value) {
             return null;
         counters[key] = count;
     }
-    return { size, working, blocked, counters };
+    return { size, working, idle, done, blocked, counters };
 }
 function boundedCount(value, limit) {
     if (typeof value !== 'number' || !Number.isInteger(value))
@@ -7204,7 +7485,7 @@ function parseObject(raw) {
  * session; car identities are `name/car1`, `name/car2`, stable for the whole
  * hosting session.
  */
-function createParticipantRegistry() {
+function createParticipantRegistry(raceMode = 'classic') {
     /** Insertion order is team order; participants are never removed, so teams
      *  and points survive departures for the lifetime of the host. */
     const participants = new Map();
@@ -7224,8 +7505,8 @@ function createParticipantRegistry() {
             if (existing.connected)
                 return false;
             existing.connected = true;
-            // Cars stay pitted until the resumed participant pushes fresh telemetry,
-            // and that first report re-baselines the restarted counters.
+            // Telemetry stays stale until the resumed participant pushes a fresh
+            // report, which also re-baselines the restarted counters.
             existing.herdrLive = false;
             existing.countersBaselined = false;
             return true;
@@ -7239,7 +7520,7 @@ function createParticipantRegistry() {
         });
         return true;
     }
-    /** Design decision 7: the team and points stay, the cars all pit. */
+    /** The team, retained report, and points stay; telemetry becomes stale. */
     function disconnect(name, now) {
         const participant = participants.get(name);
         if (!participant)
@@ -7265,7 +7546,7 @@ function createParticipantRegistry() {
         }
         participant.countersBaselined = true;
     }
-    /** The participant's local herdr went down: keep the grid, pit the cars. */
+    /** The participant's local Herdr went down: keep the grid and stale report. */
     function markOffline(name, now) {
         const participant = participants.get(name);
         if (!participant)
@@ -7284,6 +7565,17 @@ function createParticipantRegistry() {
     function isRacing(participant) {
         return participant.connected && participant.herdrLive;
     }
+    function crewState(crew) {
+        if (crew.blocked > 0)
+            return 'blocked';
+        if (crew.working > 0)
+            return 'working';
+        if (crew.size > 0 && crew.done === crew.size)
+            return 'done';
+        if (crew.size > 0 && crew.idle === crew.size)
+            return 'idle';
+        return 'cruising';
+    }
     /** Everything the race session gets to see: up to two synthesized cars per
      *  team. Names and per-agent identifiers never reached the host (M7), so
      *  this projection cannot leak them; what shows is the crew arithmetic the
@@ -7297,6 +7589,7 @@ function createParticipantRegistry() {
                 if (car.crew.size === 0)
                     return; // an empty crew fields no car (M5)
                 const working = racing ? car.crew.working : 0;
+                const state = crewState(car.crew);
                 agents.push({
                     terminalID: `${participant.name}/car${index + 1}`,
                     paneID: `${participant.name}/car${index + 1}`,
@@ -7309,9 +7602,17 @@ function createParticipantRegistry() {
                     // Focus is inactive in multiplayer (design decision 4).
                     isFocused: false,
                     status: !racing ? 'idle'
-                        : car.crew.blocked > 0 ? 'blocked'
-                            : car.crew.working > 0 ? 'working'
-                                : 'idle',
+                        : raceMode === 'classic'
+                            ? car.crew.blocked > 0 ? 'blocked' : car.crew.working > 0 ? 'working' : 'idle'
+                            : state === 'cruising' ? 'idle' : state,
+                    crewState: state,
+                    crewCounts: {
+                        working: car.crew.working,
+                        idle: car.crew.idle,
+                        done: car.crew.done,
+                        blocked: car.crew.blocked,
+                    },
+                    isLastKnown: !racing,
                 });
             });
             if (agents.length === 0)
@@ -7328,9 +7629,14 @@ function createParticipantRegistry() {
             participant.cars.forEach((car, index) => {
                 if (car.crew.size === 0)
                     return;
+                const live = isRacing(participant);
+                const state = crewState(car.crew);
+                const uptime = car.tracker.uptime(now);
                 factors.push({
                     terminalID: `${participant.name}/car${index + 1}`,
-                    factor: MultiplayerRules.uptimeFloor + MultiplayerRules.uptimeSpan * car.tracker.uptime(now),
+                    factor: raceMode === 'continuous'
+                        ? (!live || state !== 'working' ? MultiplayerRules.cruisingFactor : 1 + 0.25 * uptime)
+                        : MultiplayerRules.uptimeFloor + MultiplayerRules.uptimeSpan * uptime,
                 });
             });
         }
@@ -7357,18 +7663,27 @@ const host_monotonicSeconds = () => performance.now() / 1000;
  */
 async function startHost(options) {
     const log = options.log ?? (() => { });
-    const circuit = options.circuit ?? DEFAULT_VENUE_ID;
+    const raceMode = options.raceMode ?? 'classic';
+    let circuit = options.circuit ?? (raceMode === 'continuous' ? randomVenue(options.random) : DEFAULT_VENUE_ID);
+    const venues = createVenueShuffleBag(circuit, options.random);
     // Multiplayer rank is earned through uptime (M3/M4); the seeded dice stay
     // as flavor only, so the session gets the narrowed pace source.
-    const session = createRaceSession(multiplayerPace);
-    const broadcaster = createRaceBroadcaster(session, host_monotonicSeconds, undefined, circuit);
-    // The venue is fixed for the whole hosting session; its published distance
-    // is the race distance from the first Grand Prix on.
+    const session = createRaceSession(raceMode === 'continuous' ? continuousMultiplayerPace : multiplayerPace, undefined, { raceMode });
+    const broadcaster = createRaceBroadcaster(session, host_monotonicSeconds, undefined, () => circuit, (grandPrix, now) => {
+        if (raceMode !== 'continuous')
+            return;
+        circuit = venues.next();
+        session.setTotalLaps(venueLaps(circuit), now);
+        log(`Grand Prix ${grandPrix} · circuit ${circuit} (${venueLaps(circuit)} laps)`);
+    });
+    // The opening venue's published distance is race state from the first Grand
+    // Prix on. The broadcaster swaps both the drawing and distance at each later
+    // Grand Prix boundary.
     session.setTotalLaps(venueLaps(circuit), host_monotonicSeconds());
     // There is no herdr connection whose liveness could gate the clock; the
     // host's sources are the participants, so race time always flows.
     session.applyConnection({ kind: 'live' }, host_monotonicSeconds());
-    const registry = createParticipantRegistry();
+    const registry = createParticipantRegistry(raceMode);
     // publish runs inside join-socket message handlers, where a throw would be
     // an uncaught exception taking the whole party down. The known overflow is
     // the race grid's 99 car numbers (4+ participants at the per-participant
@@ -7391,7 +7706,7 @@ async function startHost(options) {
         // Focus is inactive in multiplayer (design decision 4): the host cannot
         // know whose browser clicked, and relaying would let anyone on the
         // network shake someone else's terminal. Circuit writes are ignored for
-        // the same reason — the venue was pinned above, at launch.
+        // the same reason — venue rotation belongs to the host.
         onFocus: () => { },
         onCircuit: () => { },
         onJoin: socket => attachParticipant(socket, registry, publish, log),
@@ -7413,6 +7728,40 @@ async function startHost(options) {
             await server.close();
         },
     };
+}
+/** Venue rotation for continuous mode: every circuit appears once per cycle,
+ * and the first circuit of a new cycle cannot repeat the previous one. */
+function createVenueShuffleBag(opening, random = Math.random) {
+    let previous = opening;
+    let bag = shuffle(VENUES.map(venue => venue.id).filter(id => id !== opening), random);
+    function next() {
+        if (bag.length === 0) {
+            bag = shuffle(VENUES.map(venue => venue.id), random);
+            if (bag[0] === previous && bag.length > 1)
+                [bag[0], bag[1]] = [bag[1], bag[0]];
+        }
+        previous = bag.shift();
+        return previous;
+    }
+    return { next };
+}
+/** Backwards-compatible one-shot helper. Rotation itself uses the persistent
+ * shuffle bag above so a whole cycle cannot repeat a venue. */
+function randomNextVenue(current, random = Math.random) {
+    return createVenueShuffleBag(current, random).next();
+}
+function shuffle(values, random) {
+    const result = [...values];
+    for (let index = result.length - 1; index > 0; index -= 1) {
+        const swap = Math.min(index, Math.max(0, Math.floor(random() * (index + 1))));
+        [result[index], result[swap]] = [result[swap], result[index]];
+    }
+    return result;
+}
+/** Picks the opening venue when the host command did not specify one. */
+function randomVenue(random = Math.random) {
+    const index = Math.min(VENUES.length - 1, Math.max(0, Math.floor(random() * VENUES.length)));
+    return VENUES[index].id;
 }
 /** Per-socket handshake and message pump for one joining participant. */
 function attachParticipant(socket, registry, publish, log) {
@@ -7466,15 +7815,17 @@ function attachParticipant(socket, registry, publish, log) {
             return;
         registry.disconnect(name, host_monotonicSeconds());
         publish();
-        log(`${name} disconnected — cars to the pit lane (rejoin with the same name to resume)`);
+        log(`${name} disconnected — team telemetry offline (rejoin with the same name to resume)`);
     });
     socket.on('error', () => { }); // 'close' always follows; nothing extra to do
 }
 /** Foreground CLI runner (design decision 9): prints where to point browsers
  *  and join clients, then hosts until Ctrl+C. */
-async function runHost(port, circuit) {
-    const host = await startHost({ port, circuit, log: line => console.log(line) });
-    console.log(`Herdr F1 multiplayer host · port ${host.port} · circuit ${circuit} (${venueLaps(circuit)} laps)`);
+async function runHost(port, circuit, raceMode = 'classic') {
+    const openingCircuit = circuit ?? (raceMode === 'continuous' ? randomVenue() : DEFAULT_VENUE_ID);
+    const host = await startHost({ port, circuit: openingCircuit, raceMode, log: line => console.log(line) });
+    console.log(`Herdr F1 multiplayer host · ${raceMode} race · port ${host.port} · ` +
+        `opening circuit ${openingCircuit} (${venueLaps(openingCircuit)} laps)`);
     for (const address of viewerAddresses()) {
         console.log(`  view    http://${address}:${host.port}`);
     }
@@ -7541,6 +7892,10 @@ function createCrewTracker() {
             crew.size += 1;
             if (agent.status === 'working')
                 crew.working += 1;
+            if (agent.status === 'idle')
+                crew.idle += 1;
+            if (agent.status === 'done')
+                crew.done += 1;
             if (agent.status === 'blocked')
                 crew.blocked += 1;
             seen.add(agent.terminalID);
@@ -7613,8 +7968,8 @@ async function runJoin(options) {
             return; // the client fetches an authoritative snapshot right after going live
         }
         else {
-            // Local herdr feed is down: tell the host to pit our cars rather than
-            // race them on stale telemetry.
+            // Local Herdr feed is down: the host applies the selected mode's offline
+            // rule without presenting this retained report as live telemetry.
             latest = { type: 'offline' };
         }
         push(latest);
@@ -7705,7 +8060,7 @@ const USAGE = `Usage:
   herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>]
+  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
   herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {
 }
@@ -7722,6 +8077,7 @@ function parseArgs(argv, env = process.env) {
                 fixture: { type: 'string' },
                 name: { type: 'string' },
                 circuit: { type: 'string' },
+                'race-mode': { type: 'string' },
             },
         });
         const command = positionals[0] ?? 'start';
@@ -7734,6 +8090,8 @@ function parseArgs(argv, env = process.env) {
         // The venue is the host launcher's choice alone (design decision 8, revised).
         if (values.circuit !== undefined && command !== 'host')
             throw new UsageError(USAGE);
+        if (values['race-mode'] !== undefined && command !== 'host')
+            throw new UsageError(USAGE);
         // `join` takes its port from <host[:port]>, so --port belongs to the
         // commands that bind a server.
         const starts = command === 'start' || command === '__daemon' || command === 'host';
@@ -7745,10 +8103,14 @@ function parseArgs(argv, env = process.env) {
         if (command === 'host') {
             if (values.fixture || values.socket)
                 throw new UsageError(USAGE);
-            const circuit = values.circuit ?? DEFAULT_VENUE_ID;
-            if (!isVenueID(circuit))
+            if (values.circuit !== undefined && !isVenueID(values.circuit))
                 throw new UsageError(USAGE);
-            return { kind: 'host', port, circuit };
+            const raceMode = values['race-mode'] ?? 'classic';
+            if (raceMode !== 'classic' && raceMode !== 'continuous')
+                throw new UsageError(USAGE);
+            return values.circuit === undefined
+                ? { kind: 'host', port, raceMode }
+                : { kind: 'host', port, circuit: values.circuit, raceMode };
         }
         if (command === 'join') {
             if (positionals.length !== 2 || values.fixture)
@@ -7820,7 +8182,7 @@ async function run(argv) {
     // Multiplayer commands run in the foreground (design decision 9): party
     // sessions are transient, so there is no daemon to manage.
     if (command.kind === 'host') {
-        await runHost(command.port, command.circuit);
+        await runHost(command.port, command.circuit, command.raceMode);
         return;
     }
     if (command.kind === 'join') {

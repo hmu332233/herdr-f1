@@ -12,7 +12,7 @@ describe('RaceRules', () => {
     });
   });
 
-  // The server hands out colour slots modulo paletteSize while the colours
+  // The server hands out colour slots against paletteSize while the colours
   // themselves live on the client. If the two drift, teams silently share a
   // livery (array longer) or wrap onto one (array shorter).
   it('paletteSize matches the number of constructor colours', () => {

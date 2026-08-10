@@ -15,13 +15,13 @@ export function createStandingsPanel(
   function render(sync: SyncMessage): void {
     const nextStructure = sync.teams
       .map(team => `${team.id}:${team.entries.map(entry => entry.id).join(',')}`)
-      .join('|');
+      .join('|') + `|${sync.raceMode}`;
     if (nextStructure !== structure) {
       structure = nextStructure;
       rebuild(sync);
       return;
     }
-    for (const team of sync.teams) cards.get(team.id)?.update(team);
+    for (const team of sync.teams) cards.get(team.id)?.update(team, sync.raceMode);
   }
 
   function rebuild(sync: SyncMessage): void {
@@ -31,7 +31,7 @@ export function createStandingsPanel(
     cards.clear();
     container.replaceChildren(
       ...sync.teams.map(team => {
-        const card = createTeamCard(team, onFocus);
+        const card = createTeamCard(team, onFocus, sync.raceMode);
         cards.set(team.id, card);
         return card.element;
       }),
@@ -46,7 +46,11 @@ export function createStandingsPanel(
   return { render };
 }
 
-function createTeamCard(team: TeamStanding, onFocus: (terminalID: string) => void) {
+function createTeamCard(
+  team: TeamStanding,
+  onFocus: (terminalID: string) => void,
+  raceMode: SyncMessage['raceMode'],
+) {
   const element = document.createElement('article');
   element.className = 'team-card';
   element.setAttribute('role', 'listitem');
@@ -63,7 +67,9 @@ function createTeamCard(team: TeamStanding, onFocus: (terminalID: string) => voi
   name.className = 'team-name';
   const stats = document.createElement('span');
   stats.className = 'team-stats';
-  header.append(rank, name, stats);
+  const alert = document.createElement('span');
+  alert.className = 'team-alert';
+  header.append(rank, name, alert, stats);
   element.append(accent, header);
 
   const rows = new Map<string, ReturnType<typeof createAgentRow>>();
@@ -74,16 +80,21 @@ function createTeamCard(team: TeamStanding, onFocus: (terminalID: string) => voi
       divider.className = 'agent-divider';
       element.append(divider);
     }
-    const row = createAgentRow(entry, teamColor(team.colorToken), onFocus);
+    const row = createAgentRow(entry, teamColor(team.colorToken), onFocus, raceMode);
     rows.set(entry.id, row);
     element.append(row.element);
   });
 
   /** In-place text refresh; the row set and order must be unchanged
    *  (structural changes rebuild the whole card). */
-  function update(team: TeamStanding): void {
+  function update(team: TeamStanding, mode: SyncMessage['raceMode']): void {
     rank.textContent = `P${team.rank}`;
     name.textContent = team.label.toUpperCase();
+    alert.textContent = team.isOffline
+      ? 'TEAM OFFLINE'
+      : team.blockedCount > 0 ? `${team.blockedCount} BLOCKED` : '';
+    element.classList.toggle('is-offline', team.isOffline);
+    element.classList.toggle('is-blocked', !team.isOffline && team.blockedCount > 0);
     stats.replaceChildren();
     const distance = document.createElement('span');
     distance.className = 'distance';
@@ -96,10 +107,10 @@ function createTeamCard(team: TeamStanding, onFocus: (terminalID: string) => voi
       'aria-label',
       `P${team.rank}, ${team.label}, ${team.distanceText.toLowerCase()}, ${team.entries.length} cars`,
     );
-    for (const entry of team.entries) rows.get(entry.id)?.update(entry);
+    for (const entry of team.entries) rows.get(entry.id)?.update(entry, mode);
   }
 
-  update(team);
+  update(team, raceMode);
   return { element, update };
 }
 
@@ -109,6 +120,7 @@ function createAgentRow(
   entry: EntryPresentation,
   color: string,
   onFocus: (terminalID: string) => void,
+  raceMode: SyncMessage['raceMode'],
 ) {
   const element = document.createElement('button');
   element.type = 'button';
@@ -140,9 +152,25 @@ function createAgentRow(
   stint.className = 'agent-stint';
   sub.append(kind, onboard, status, stint);
 
-  element.append(chip, main, sub);
+  const crewDetail = document.createElement('span');
+  crewDetail.className = 'crew-detail';
+  const crewBar = document.createElement('span');
+  crewBar.className = 'crew-bar';
+  const segments = (['working', 'idle', 'done', 'blocked'] as const).map(key => {
+    const segment = document.createElement('span');
+    segment.className = `crew-${key}`;
+    crewBar.append(segment);
+    return [key, segment] as const;
+  });
+  const counts = document.createElement('span');
+  counts.className = 'crew-counts mono';
+  const lastKnown = document.createElement('span');
+  lastKnown.className = 'last-known';
+  crewDetail.append(crewBar, counts, lastKnown);
 
-  function update(entry: EntryPresentation): void {
+  element.append(chip, main, sub, crewDetail);
+
+  function update(entry: EntryPresentation, mode: SyncMessage['raceMode']): void {
     const workspace = document.createElement('span');
     workspace.className = 'workspace';
     workspace.textContent = entry.workspaceLabel;
@@ -154,12 +182,21 @@ function createAgentRow(
     tab.textContent = entry.tabLabel;
     main.replaceChildren(workspace, separator, tab);
 
-    kind.textContent = entry.agentKind.toUpperCase();
+    kind.textContent = mode === 'continuous' ? entry.statusText : entry.agentKind.toUpperCase();
     const statusColor = rowStatusColor(entry);
-    status.textContent = entry.statusText;
+    status.textContent = mode === 'continuous' ? entry.crewState.toUpperCase() : entry.statusText;
     status.style.color = statusColor;
     status.style.background = hexAlpha(statusColor, 0.14);
     stint.textContent = entry.showsNewStint ? 'NEW STINT' : '';
+    crewDetail.hidden = mode !== 'continuous';
+    const total = Object.values(entry.crewCounts).reduce((sum, value) => sum + value, 0);
+    for (const [key, segment] of segments) {
+      segment.style.width = `${total === 0 ? 0 : entry.crewCounts[key] / total * 100}%`;
+    }
+    counts.textContent =
+      `W${entry.crewCounts.working} · I${entry.crewCounts.idle} · ` +
+      `D${entry.crewCounts.done} · B${entry.crewCounts.blocked}`;
+    lastKnown.textContent = entry.isLastKnown ? 'LAST KNOWN' : '';
     element.classList.toggle('is-onboard', entry.isFocused);
     // Flashes in step with the track and this car's marker: the row is how a
     // viewer gets from "something is yellow" to which agent needs them.
@@ -173,6 +210,6 @@ function createAgentRow(
     );
   }
 
-  update(entry);
+  update(entry, raceMode);
   return { element, update };
 }

@@ -7,12 +7,14 @@ export function createChrome() {
   const lap = document.getElementById('lap-text')!;
   const phase = document.getElementById('phase-text')!;
   const grandPrix = document.getElementById('gp-text')!;
+  const raceMode = document.getElementById('race-mode-text')!;
   const connection = document.getElementById('connection-text')!;
   const carCount = document.getElementById('car-count')!;
   const overlay = document.getElementById('overlay')!;
   const standingsEmpty = document.getElementById('standings-empty')!;
   const flag = document.getElementById('flag-pill')!;
   const flagCount = document.getElementById('flag-count')!;
+  const flagText = document.getElementById('flag-text')!;
   const trackWrap = document.getElementById('track-wrap')!;
 
   function render(sync: SyncMessage): void {
@@ -22,6 +24,7 @@ export function createChrome() {
     phase.textContent =
       sync.phase === 'awaitingGrid' ? 'FORMATION' : sync.phase === 'live' ? 'RACE LIVE' : 'PODIUM';
     grandPrix.textContent = `GRAND PRIX ${sync.grandPrix}`;
+    raceMode.textContent = sync.raceMode === 'continuous' ? 'CONTINUOUS RACE' : 'CLASSIC RACE';
 
     const entryCount = sync.teams.reduce((count, team) => count + team.entries.length, 0);
     carCount.textContent = entryCount === 0 ? '—' : `${entryCount} CAR${entryCount === 1 ? '' : 'S'}`;
@@ -48,17 +51,30 @@ export function createChrome() {
    *  overflow. One stopped car is already identifiable from its flashing marker
    *  and standings row, so the number only earns space once there are several. */
   function renderFlag(sync: SyncMessage): void {
-    const isYellow = sync.flag.kind === 'yellow';
-    flag.hidden = !isYellow;
+    const isSafetyCar = sync.raceControl.kind === 'safetyCar';
+    const isGreenFlag = sync.raceControl.kind === 'greenFlag';
+    const isYellow = sync.flag.kind === 'yellow' || isSafetyCar;
+    flag.hidden = !isYellow && !isGreenFlag;
+    flag.classList.toggle('is-green', isGreenFlag);
     trackWrap.classList.toggle('is-yellow-flag', isYellow);
-    if (sync.flag.kind !== 'yellow') return;
-    const count = sync.flag.terminalIDs.length;
+    if (isGreenFlag) {
+      flagText.textContent = 'GREEN FLAG';
+      flagCount.textContent = '';
+      flag.setAttribute('aria-label', 'Green flag, racing resumed');
+      return;
+    }
+    if (!isYellow) return;
+    flagText.textContent = sync.raceControl.kind === 'safetyCar'
+      ? sync.raceControl.phase === 'inThisLap' ? 'SC IN THIS LAP' : 'SAFETY CAR'
+      : 'YELLOW FLAG';
+    const count = sync.flag.kind === 'yellow' ? sync.flag.terminalIDs.length : 0;
     flagCount.textContent = count > 1 ? `×${count}` : '';
     // The visible pill drops the wording to fit; the label keeps it, so the
     // announcement a screen reader makes is still a full sentence.
     flag.setAttribute(
       'aria-label',
-      `Yellow flag, ${count} car${count === 1 ? '' : 's'} stopped on track`,
+      `${isSafetyCar ? flagText.textContent : 'Yellow flag'}, ` +
+        `${count} car${count === 1 ? '' : 's'} stopped on track`,
     );
   }
 

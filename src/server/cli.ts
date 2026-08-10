@@ -6,22 +6,23 @@ import { defaultSocketPath } from './herdr/client.js';
 import { runHost } from './multiplayer/host.js';
 import { runJoin } from './multiplayer/join.js';
 import { normalizeParticipantName } from './multiplayer/wire.js';
-import { DEFAULT_VENUE_ID, isVenueID, VENUE_IDS, type VenueID } from '../shared/venues.js';
+import { isVenueID, VENUE_IDS, type VenueID } from '../shared/venues.js';
 import { targetLabel, type InstanceTarget } from './target.js';
+import type { RaceMode } from '../shared/presentation.js';
 
 export type CliCommand =
   | { kind: 'start'; target: InstanceTarget; port: number; open: boolean }
   | { kind: 'stop'; target: InstanceTarget }
   | { kind: 'status'; target: InstanceTarget }
   | { kind: 'daemon'; target: InstanceTarget; port: number }
-  | { kind: 'host'; port: number; circuit: VenueID }
+  | { kind: 'host'; port: number; circuit?: VenueID; raceMode: RaceMode }
   | { kind: 'join'; host: string; port: number; name: string; socketPath: string };
 
 const USAGE = `Usage:
   herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>]
+  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
   herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {}
 
@@ -38,6 +39,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
         fixture: { type: 'string' },
         name: { type: 'string' },
         circuit: { type: 'string' },
+        'race-mode': { type: 'string' },
       },
     });
     const command = positionals[0] ?? 'start';
@@ -46,6 +48,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     if (values.name !== undefined && command !== 'join') throw new UsageError(USAGE);
     // The venue is the host launcher's choice alone (design decision 8, revised).
     if (values.circuit !== undefined && command !== 'host') throw new UsageError(USAGE);
+    if (values['race-mode'] !== undefined && command !== 'host') throw new UsageError(USAGE);
     // `join` takes its port from <host[:port]>, so --port belongs to the
     // commands that bind a server.
     const starts = command === 'start' || command === '__daemon' || command === 'host';
@@ -54,9 +57,12 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError(USAGE);
     if (command === 'host') {
       if (values.fixture || values.socket) throw new UsageError(USAGE);
-      const circuit = values.circuit ?? DEFAULT_VENUE_ID;
-      if (!isVenueID(circuit)) throw new UsageError(USAGE);
-      return { kind: 'host', port, circuit };
+      if (values.circuit !== undefined && !isVenueID(values.circuit)) throw new UsageError(USAGE);
+      const raceMode = values['race-mode'] ?? 'classic';
+      if (raceMode !== 'classic' && raceMode !== 'continuous') throw new UsageError(USAGE);
+      return values.circuit === undefined
+        ? { kind: 'host', port, raceMode }
+        : { kind: 'host', port, circuit: values.circuit, raceMode };
     }
     if (command === 'join') {
       if (positionals.length !== 2 || values.fixture) throw new UsageError(USAGE);
@@ -110,7 +116,7 @@ export async function run(argv: string[]): Promise<void> {
   if (command.kind === 'daemon') { await runDaemon(command.target, command.port); return; }
   // Multiplayer commands run in the foreground (design decision 9): party
   // sessions are transient, so there is no daemon to manage.
-  if (command.kind === 'host') { await runHost(command.port, command.circuit); return; }
+  if (command.kind === 'host') { await runHost(command.port, command.circuit, command.raceMode); return; }
   if (command.kind === 'join') { await runJoin(command); return; }
   if (command.kind === 'stop') {
     const stopped = await stopDaemon(command.target);

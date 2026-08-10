@@ -1,8 +1,8 @@
 /** join↔host protocol version. Mismatches are rejected with a clear error at
- *  the handshake, mirroring the herdr protocol policy. v2 is the two-car
- *  paddock (design decisions M1–M8): per-crew aggregates instead of per-agent
- *  rows. */
-export const MULTIPLAYER_PROTOCOL = 2;
+ *  the handshake, mirroring the herdr protocol policy. v3 carries a complete
+ *  aggregate state partition for each two-car crew, still without per-agent
+ *  rows or identities. */
+export const MULTIPLAYER_PROTOCOL = 3;
 
 export const CREWS_PER_TEAM = 2;
 
@@ -31,12 +31,16 @@ export interface CrewReport {
   working: number;
   /** Currently blocked — an incident on this car. */
   blocked: number;
+  /** The remaining mutually-exclusive crew states. Protocol v3 makes the
+   *  complete aggregate available to the authoritative vehicle card. */
+  idle: number;
+  done: number;
   counters: CrewCounters;
 }
 
 /** join → host. `snapshot` always carries one report per potential car.
- *  `offline` marks the participant's local herdr feed as down, so the host
- *  pits the cars instead of racing them on stale telemetry. */
+ *  `offline` marks the retained report as stale; the host applies the active
+ *  race mode's offline motion rule. */
 export type JoinMessage =
   | { type: 'hello'; protocol: number; name: string }
   | { type: 'snapshot'; crews: CrewReport[] }
@@ -52,7 +56,7 @@ export function emptyCounters(): CrewCounters {
 }
 
 export function emptyCrewReport(): CrewReport {
-  return { size: 0, working: 0, blocked: 0, counters: emptyCounters() };
+  return { size: 0, working: 0, idle: 0, done: 0, blocked: 0, counters: emptyCounters() };
 }
 
 const COUNTER_KEYS = ['incidents', 'recoveries', 'pits', 'greens', 'chequered', 'stints'] as const;
@@ -101,9 +105,10 @@ function decodeCrew(value: unknown): CrewReport | null {
   const size = boundedCount(crew.size, CREW_SIZE_LIMIT);
   const working = boundedCount(crew.working, CREW_SIZE_LIMIT);
   const blocked = boundedCount(crew.blocked, CREW_SIZE_LIMIT);
-  if (size === null || working === null || blocked === null) return null;
-  // working and blocked are disjoint subsets of the crew.
-  if (working + blocked > size) return null;
+  const idle = boundedCount(crew.idle, CREW_SIZE_LIMIT);
+  const done = boundedCount(crew.done, CREW_SIZE_LIMIT);
+  if (size === null || working === null || idle === null || done === null || blocked === null) return null;
+  if (working + idle + done + blocked !== size) return null;
   if (typeof crew.counters !== 'object' || crew.counters === null) return null;
   const raw = crew.counters as Record<string, unknown>;
   const counters = emptyCounters();
@@ -112,7 +117,7 @@ function decodeCrew(value: unknown): CrewReport | null {
     if (count === null) return null;
     counters[key] = count;
   }
-  return { size, working, blocked, counters };
+  return { size, working, idle, done, blocked, counters };
 }
 
 function boundedCount(value: unknown, limit: number): number | null {

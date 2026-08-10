@@ -1,10 +1,10 @@
-import { RaceRules, seededPace, stableHash, type RacePaceSource } from './rules.js';
+import { MultiplayerRules, RaceRules, seededPace, stableHash, type RacePaceSource } from './rules.js';
 import { radioText } from './radio.js';
 import type { HerdrUpdate, SourceAgent, SourceSnapshot } from './herdr/types.js';
 import type {
-  AgentStatus, ConnectionState, EntryPlacement, EntryPresentation, FlagState, PodiumResult,
-  RaceOverlay, RacePhase, RacePresentation, RadioKind, RadioMessage, TeamColorToken,
-  TeamStanding,
+  AgentStatus, ConnectionState, CrewCounts, CrewState, EntryPlacement, EntryPresentation,
+  FlagState, PodiumResult, RaceControlState, RaceMode, RaceOverlay, RacePhase,
+  RacePresentation, RadioKind, RadioMessage, TeamColorToken, TeamStanding,
 } from '../shared/presentation.js';
 
 interface PaceState {
@@ -21,6 +21,9 @@ interface Entry {
   agentKind: string;
   sessionReference: string | null;
   status: AgentStatus;
+  crewState: CrewState;
+  crewCounts: CrewCounts;
+  isLastKnown: boolean;
   isFocused: boolean;
   official: number;
   display: number;
@@ -37,6 +40,10 @@ interface Entry {
   bootstrapIndex: number;
 }
 
+export interface RaceSessionOptions {
+  raceMode?: RaceMode;
+}
+
 /**
  * In-memory race state owner. Consumes authoritative projected herdr
  * snapshots, connection state, and monotonic time (seconds); publishes a
@@ -50,7 +57,9 @@ export function createRaceSession(
    *  monotonic clock passed to advance(); this is injected separately so tests
    *  get stable timestamps. */
   wallClock: () => Date = () => new Date(),
+  options: RaceSessionOptions = {},
 ) {
+  const raceMode = options.raceMode ?? 'classic';
   let lastTick: number | null = null;
   /** Race distance for the circuit currently being raced. Session state rather
    *  than a constant, because each venue has its own published distance and the
@@ -64,6 +73,11 @@ export function createRaceSession(
   let connection: ConnectionState = { kind: 'waiting' };
   let hasSnapshot = false;
   let frozenPodium: PodiumResult | null = null;
+  let controlPhase: 'green' | 'deployed' | 'inThisLap' | 'greenFlag' = 'green';
+  let safetyQueue: string[] = [];
+  let safetyCarDistance = 0;
+  let withdrawalLine = 0;
+  let greenFlagUntil = 0;
 
   const entries = new Map<string, Entry>();
   let nextBootstrapIndex = 0;
@@ -126,7 +140,8 @@ export function createRaceSession(
         return;
       case 'live':
         raceTime += elapsed;
-        scoreLive(elapsed);
+        if (raceMode === 'continuous') scoreContinuous(elapsed);
+        else scoreLive(elapsed);
         return;
       case 'podium':
         raceTime += elapsed;
@@ -180,6 +195,113 @@ export function createRaceSession(
     if (finisher !== null) finishGrandPrix();
   }
 
+  function scoreContinuous(elapsed: number): void {
+    if (controlPhase === 'greenFlag' && raceTime >= greenFlagUntil) controlPhase = 'green';
+    if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+      scoreSafetyCar(elapsed);
+      return;
+    }
+    scoreContinuousGreen(elapsed);
+  }
+
+  function scoreContinuousGreen(elapsed: number): void {
+    let earliestFinish = elapsed;
+    let finisher: string | null = null;
+    for (const entry of entries.values()) {
+      if (!isContinuousRunner(entry)) continue;
+      const official = { value: entry.official };
+      const pace = { ...entry.pace };
+      const unused = walk(
+        official, pace, entry.terminalID, elapsed, continuousNormalFactor(entry),
+      );
+      if (official.value >= totalLaps) {
+        const finishTime = elapsed - unused;
+        if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
+          earliestFinish = finishTime;
+          finisher = entry.terminalID;
+        }
+      }
+    }
+    const budget = finisher === null ? elapsed : earliestFinish;
+    for (const entry of entries.values()) {
+      if (!isContinuousRunner(entry)) continue;
+      const official = { value: entry.official };
+      walk(official, entry.pace, entry.terminalID, budget, continuousNormalFactor(entry));
+      entry.official = official.value;
+      entry.display = official.value;
+    }
+    if (finisher !== null) finishGrandPrix();
+  }
+
+  function scoreSafetyCar(elapsed: number): void {
+    const leader = safetyQueue.length > 0 ? entries.get(safetyQueue[0]) : undefined;
+    let neutralized = elapsed;
+    let greenRemainder = 0;
+    if (controlPhase === 'inThisLap' && leader) {
+      const secondsToLine = Math.max(
+        0,
+        (withdrawalLine - leader.official) /
+          (RaceRules.baseSpeed * MultiplayerRules.safetyCarLeaderFactor),
+      );
+      if (secondsToLine <= elapsed) {
+        neutralized = secondsToLine;
+        greenRemainder = elapsed - secondsToLine;
+      }
+    }
+    advanceSafetyQueue(neutralized);
+    if ([...entries.values()].some(entry => entry.official >= totalLaps && isContinuousRunner(entry))) {
+      finishGrandPrix();
+      return;
+    }
+    if (greenRemainder > 0 || (controlPhase === 'inThisLap' && leader?.official === withdrawalLine)) {
+      controlPhase = 'greenFlag';
+      greenFlagUntil = raceTime - greenRemainder + MultiplayerRules.greenFlagDuration;
+      safetyQueue = [];
+      if (greenRemainder > 0) scoreContinuousGreen(greenRemainder);
+    }
+  }
+
+  function advanceSafetyQueue(elapsed: number): void {
+    if (elapsed <= 0) return;
+    safetyCarDistance += RaceRules.baseSpeed * MultiplayerRules.safetyCarLeaderFactor * elapsed;
+    let ahead: Entry | null = null;
+    for (const id of safetyQueue) {
+      const entry = entries.get(id);
+      if (!entry || !isContinuousRunner(entry)) continue;
+      const factor = ahead === null
+        ? MultiplayerRules.safetyCarLeaderFactor
+        : safetyCarFollowerFactor(ahead, entry);
+      const proposed = entry.official + RaceRules.baseSpeed * factor * elapsed;
+      entry.official = ahead === null
+        ? proposed
+        : Math.max(
+            entry.official,
+            Math.min(proposed, ahead.official - MultiplayerRules.safetyCarQueueGap),
+          );
+      entry.display = entry.official;
+      ahead = entry;
+    }
+  }
+
+  function safetyCarFollowerFactor(ahead: Entry, entry: Entry): number {
+    const excess = Math.max(
+      0,
+      ahead.official - entry.official - MultiplayerRules.safetyCarQueueGap,
+    );
+    const ratio = Math.min(1, excess / MultiplayerRules.safetyCarCatchupRange);
+    return MultiplayerRules.safetyCarLeaderFactor
+      + ratio * (MultiplayerRules.safetyCarCatchupFactor - MultiplayerRules.safetyCarLeaderFactor);
+  }
+
+  function isContinuousRunner(entry: Entry): boolean {
+    return !entry.isRetired && !entry.isQueuedNextGrid && !isLiveBlocked(entry);
+  }
+
+  function continuousNormalFactor(entry: Entry): number {
+    if (entry.isLastKnown || entry.crewState !== 'working') return MultiplayerRules.cruisingFactor;
+    return Math.min(1.25, Math.max(1, entry.externalPace));
+  }
+
   function isDriving(entry: Entry): boolean {
     return entry.status === 'working' && !entry.isRetired && !entry.isQueuedNextGrid;
   }
@@ -192,10 +314,18 @@ export function createRaceSession(
    *  circuit at all; a race would otherwise stay permanently yellow for a
    *  terminal that has already gone away. */
   function causesYellowFlag(entry: Entry): boolean {
+    if (raceMode === 'continuous') return isLiveBlocked(entry);
     return entry.status === 'blocked'
       && !entry.isRetired
       && !entry.isQueuedNextGrid
       && !entry.incidentInPit;
+  }
+
+  function isLiveBlocked(entry: Entry): boolean {
+    return entry.crewState === 'blocked'
+      && !entry.isLastKnown
+      && !entry.isRetired
+      && !entry.isQueuedNextGrid;
   }
 
   /** True while any car is stopped on the circuit. Read once per scoring step
@@ -257,7 +387,9 @@ export function createRaceSession(
     // Podium victory lap: slow display-only motion; the result is frozen.
     for (const entry of entries.values()) {
       if (entry.isRetired || entry.isQueuedNextGrid) continue;
-      if (entry.status !== 'working' && entry.status !== 'done') continue;
+      if (raceMode === 'continuous') {
+        if (isLiveBlocked(entry)) continue;
+      } else if (entry.status !== 'working' && entry.status !== 'done') continue;
       entry.display += elapsed * RaceRules.baseSpeed * RaceRules.doneCooldownFactor;
     }
   }
@@ -305,6 +437,11 @@ export function createRaceSession(
     podiumElapsed = 0;
     // Radio belongs to the Grand Prix that produced it.
     radio = [];
+    controlPhase = 'green';
+    safetyQueue = [];
+    safetyCarDistance = 0;
+    withdrawalLine = 0;
+    greenFlagUntil = 0;
     const orderedIDs = [...entries.keys()].sort((a, b) =>
       compareOrderKeys(orderKey(entries.get(a)!), orderKey(entries.get(b)!)),
     );
@@ -317,7 +454,9 @@ export function createRaceSession(
       entry.isQueuedNextGrid = false;
       entry.newStintUntil = null;
       entry.incidentInPit = false;
-      if (entry.status === 'done' || entry.status === 'blocked') circulating.push(id);
+      if (raceMode === 'classic' && (entry.status === 'done' || entry.status === 'blocked')) {
+        circulating.push(id);
+      }
     }
     // Done cooldown and incident markers restart on deterministic,
     // non-overlapping display positions around the circuit.
@@ -410,9 +549,12 @@ export function createRaceSession(
       if (announces) emitRadio(entry, 'retired');
     }
 
+    if (raceMode === 'continuous' && phase === 'live') refreshContinuousControl();
+
     if (bootstrapping) {
       phase = 'live';
       resetGrid();
+      if (raceMode === 'continuous') refreshContinuousControl();
     }
   }
 
@@ -447,6 +589,10 @@ export function createRaceSession(
       if (announces && kind !== null) emitRadio(entry, kind);
     }
 
+    entry.crewState = agent.crewState ?? agent.status;
+    entry.crewCounts = agent.crewCounts ?? countsForStatus(agent.status);
+    entry.isLastKnown = agent.isLastKnown ?? false;
+
     entry.tabLabel = agent.tabLabel;
     entry.agentKind = agent.agentKind;
     entry.isFocused = agent.isFocused;
@@ -461,6 +607,9 @@ export function createRaceSession(
       agentKind: agent.agentKind,
       sessionReference: agent.agentSessionReference,
       status: agent.status,
+      crewState: agent.crewState ?? agent.status,
+      crewCounts: agent.crewCounts ?? countsForStatus(agent.status),
+      isLastKnown: agent.isLastKnown ?? false,
       isFocused: agent.isFocused,
       official: 0,
       display: 0,
@@ -487,6 +636,58 @@ export function createRaceSession(
     entries.set(agent.terminalID, entry);
   }
 
+  function refreshContinuousControl(): void {
+    const blocked = [...entries.values()].filter(isLiveBlocked);
+    if (blocked.length > 0) {
+      if (controlPhase === 'green' || controlPhase === 'greenFlag') {
+        safetyQueue = runningOrder();
+        const leader = safetyQueue.length > 0 ? entries.get(safetyQueue[0]) : undefined;
+        safetyCarDistance = (leader?.official ?? Math.max(0, ...blocked.map(entry => entry.official)))
+          + MultiplayerRules.safetyCarQueueGap;
+      } else {
+        safetyQueue = safetyQueue.filter(id => {
+          const entry = entries.get(id);
+          return entry !== undefined && isContinuousRunner(entry);
+        });
+        appendMissingQueueRunners();
+      }
+      controlPhase = 'deployed';
+      return;
+    }
+
+    if (controlPhase === 'deployed') {
+      appendMissingQueueRunners();
+      const leader = safetyQueue.length > 0 ? entries.get(safetyQueue[0]) : undefined;
+      withdrawalLine = leader ? Math.floor(leader.official) + 1 : 0;
+      controlPhase = leader ? 'inThisLap' : 'greenFlag';
+      if (!leader) greenFlagUntil = raceTime + MultiplayerRules.greenFlagDuration;
+      return;
+    }
+
+    if (controlPhase === 'inThisLap') appendMissingQueueRunners();
+  }
+
+  function runningOrder(): string[] {
+    return [...entries.values()]
+      .filter(isContinuousRunner)
+      .sort((a, b) => b.official - a.official || compareOrderKeys(orderKey(a), orderKey(b)))
+      .map(entry => entry.terminalID);
+  }
+
+  function appendMissingQueueRunners(): void {
+    const present = new Set(safetyQueue);
+    const missing = runningOrder().filter(id => !present.has(id));
+    for (const id of missing) {
+      const entry = entries.get(id)!;
+      const tail = safetyQueue.length > 0 ? entries.get(safetyQueue[safetyQueue.length - 1]) : undefined;
+      if (tail) {
+        entry.official = Math.max(0, tail.official - MultiplayerRules.safetyCarQueueGap);
+        entry.display = entry.official;
+      }
+      safetyQueue.push(id);
+    }
+  }
+
   // MARK: - Identity assignment
 
   function assignNumber(terminalID: string): number {
@@ -506,14 +707,16 @@ export function createRaceSession(
   }
 
   function assignTeamTokens(ids: string[]): void {
-    // Existing assignments are preserved; only unseen teams (sorted by
-    // workspace ID for determinism) probe for a free palette slot.
+    // Existing assignments are preserved. The palette itself is ordered as a
+    // max-contrast sequence, so handing out the first free slot makes a small
+    // field much easier to scan than starting from an arbitrary hash (which
+    // could give the first two teams neighboring blues or reds). Sorting a
+    // batch keeps bootstrap assignment deterministic; later arrivals take the
+    // next visually distinct slot without changing anyone already racing.
     const unseen = ids.filter(id => !teamTokens.has(id)).sort(compareStrings);
     for (const id of unseen) {
-      const preferred = Number(stableHash(id) % BigInt(RaceRules.paletteSize));
       let assigned: number | null = null;
-      for (let probe = 0; probe < RaceRules.paletteSize; probe += 1) {
-        const slot = (preferred + probe) % RaceRules.paletteSize;
+      for (let slot = 0; slot < RaceRules.paletteSize; slot += 1) {
         if (!usedPaletteSlots.has(slot)) {
           assigned = slot;
           break;
@@ -534,6 +737,7 @@ export function createRaceSession(
     const teams = rankedTeams();
     const currentOverlay = overlay();
     return {
+      raceMode,
       phase: phase,
       grandPrix: grandPrix,
       headerLap: headerLap(),
@@ -543,8 +747,28 @@ export function createRaceSession(
       connection: connection,
       overlay: currentOverlay,
       flag: flag(teams),
+      raceControl: raceControl(teams),
       radio: [...radio],
     };
+  }
+
+  function raceControl(teams: TeamStanding[]): RaceControlState {
+    if (raceMode !== 'continuous') return { kind: 'green' };
+    if (controlPhase === 'greenFlag') return { kind: 'greenFlag' };
+    if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+      const terminalIDs = teams.flatMap(team => team.entries)
+        .filter(entry => entry.causesYellowFlag)
+        .map(entry => entry.id);
+      return {
+        kind: 'safetyCar',
+        phase: controlPhase,
+        terminalIDs,
+        safetyCarProgress: controlPhase === 'deployed'
+          ? safetyCarDistance - Math.floor(safetyCarDistance)
+          : null,
+      };
+    }
+    return { kind: 'green' };
   }
 
   /** Track condition, read off the entries already presented so the flag and
@@ -607,6 +831,8 @@ export function createRaceSession(
       distance: teamGroup.distance,
       distanceText: `${teamGroup.distance.toFixed(1)} LAPS`,
       gapText: index === 0 ? '—' : gapText(leaderDistance - teamGroup.distance),
+      isOffline: teamGroup.members.every(entry => entry.isLastKnown),
+      blockedCount: teamGroup.members.filter(entry => isLiveBlocked(entry)).length,
       entries: teamGroup.members
         .slice()
         .sort(
@@ -631,6 +857,14 @@ export function createRaceSession(
     } else if (entry.isRetired) {
       placement = { kind: 'retired' };
       statusText = `RETIRED · LAP ${lap}`;
+    } else if (raceMode === 'continuous') {
+      if (isLiveBlocked(entry)) {
+        placement = { kind: 'incidentTrack', progress };
+        statusText = `INCIDENT · LAP ${lap}`;
+      } else {
+        placement = { kind: 'track', progress };
+        statusText = `LAP ${lap}`;
+      }
     } else {
       switch (entry.status) {
         case 'working':
@@ -660,6 +894,9 @@ export function createRaceSession(
       tabLabel: entry.tabLabel,
       agentKind: entry.agentKind,
       status: entry.status,
+      crewState: entry.crewState,
+      crewCounts: { ...entry.crewCounts },
+      isLastKnown: entry.isLastKnown,
       colorToken: teamTokens.get(entry.teamID) ?? { kind: 'palette', slot: 0 },
       officialDistance: entry.official,
       lap,
@@ -678,6 +915,21 @@ export function createRaceSession(
     if (connection.kind !== 'live') return 0;
     if (entry.isRetired || entry.isQueuedNextGrid) return 0;
     if (phase === 'live') {
+      if (raceMode === 'continuous') {
+        if (!isContinuousRunner(entry)) return 0;
+        if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+          const index = safetyQueue.indexOf(entry.terminalID);
+          if (index < 0) return 0;
+          if (index === 0) return RaceRules.baseSpeed * MultiplayerRules.safetyCarLeaderFactor;
+          const ahead = entries.get(safetyQueue[index - 1]);
+          return RaceRules.baseSpeed * (ahead
+            ? safetyCarFollowerFactor(ahead, entry)
+            : MultiplayerRules.safetyCarLeaderFactor);
+        }
+        return RaceRules.baseSpeed
+          * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
+          * continuousNormalFactor(entry);
+      }
       if (entry.status === 'working') {
         return RaceRules.baseSpeed
           * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
@@ -776,4 +1028,13 @@ function compareStrings(a: string, b: string): number {
 
 function compareOrderKeys(a: [number, number, string], b: [number, number, string]): number {
   return a[0] - b[0] || a[1] - b[1] || compareStrings(a[2], b[2]);
+}
+
+function countsForStatus(status: AgentStatus): CrewCounts {
+  return {
+    working: status === 'working' ? 1 : 0,
+    idle: status === 'idle' ? 1 : 0,
+    done: status === 'done' ? 1 : 0,
+    blocked: status === 'blocked' ? 1 : 0,
+  };
 }

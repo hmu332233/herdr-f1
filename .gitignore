@@ -11,6 +11,11 @@ coverage/
 
 # Local documentation artifacts
 docs
+!docs/
+docs/*
+!docs/adr/
+docs/adr/*
+!docs/adr/*.md
 
 # Local pack output
 *.tgz

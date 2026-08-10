@@ -42,6 +42,8 @@ export function createCrewTracker() {
       const crew = crews[crewIndex];
       crew.size += 1;
       if (agent.status === 'working') crew.working += 1;
+      if (agent.status === 'idle') crew.idle += 1;
+      if (agent.status === 'done') crew.done += 1;
       if (agent.status === 'blocked') crew.blocked += 1;
       seen.add(agent.terminalID);
 
@@ -120,8 +122,8 @@ export async function runJoin(options: JoinOptions): Promise<void> {
     } else if (update.state.kind === 'live') {
       return; // the client fetches an authoritative snapshot right after going live
     } else {
-      // Local herdr feed is down: tell the host to pit our cars rather than
-      // race them on stale telemetry.
+      // Local Herdr feed is down: the host applies the selected mode's offline
+      // rule without presenting this retained report as live telemetry.
       latest = { type: 'offline' };
     }
     push(latest);

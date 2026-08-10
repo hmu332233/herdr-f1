@@ -1,4 +1,6 @@
-import type { AgentStatus, ConnectionState } from '../../shared/presentation.js';
+import type {
+  AgentStatus, ConnectionState, CrewCounts, CrewState,
+} from '../../shared/presentation.js';
 
 /** One detected agent, projected from an authoritative herdr snapshot.
  *  The terminal ID is the durable car identity and the focus target. */
@@ -12,6 +14,10 @@ export interface SourceAgent {
   agentSessionReference: string | null;
   isFocused: boolean;
   status: AgentStatus;
+  /** Multiplayer aggregate metadata. Local Herdr projections omit it. */
+  crewState?: CrewState;
+  crewCounts?: CrewCounts;
+  isLastKnown?: boolean;
 }
 
 /** One herdr workspace acting as a racing team. */

@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { WebSocket } from 'ws';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createCrewTracker } from '../src/server/multiplayer/join.js';
-import { startHost, type HostHandle } from '../src/server/multiplayer/host.js';
+import { createVenueShuffleBag, randomVenue, startHost, type HostHandle } from '../src/server/multiplayer/host.js';
 import { createParticipantRegistry } from '../src/server/multiplayer/registry.js';
 import { createUptimeTracker } from '../src/server/multiplayer/uptime.js';
 import {
@@ -16,7 +16,7 @@ import type { SyncMessage } from '../src/shared/protocol.js';
 import { waitUntil } from './helpers/fake-herdr.js';
 
 const crew = (size: number, working: number, blocked = 0, counters: Partial<CrewCounters> = {}): CrewReport =>
-  ({ size, working, blocked, counters: { ...emptyCounters(), ...counters } });
+  ({ size, working, idle: size - working - blocked, done: 0, blocked, counters: { ...emptyCounters(), ...counters } });
 
 describe('wire', () => {
   it('normalizes participant names and rejects unusable ones', () => {
@@ -27,8 +27,8 @@ describe('wire', () => {
   });
 
   it('decodes valid join messages', () => {
-    expect(decodeJoinMessage(JSON.stringify({ type: 'hello', protocol: 2, name: ' mark ' })))
-      .toEqual({ type: 'hello', protocol: 2, name: 'mark' });
+    expect(decodeJoinMessage(JSON.stringify({ type: 'hello', protocol: 3, name: ' mark ' })))
+      .toEqual({ type: 'hello', protocol: 3, name: 'mark' });
     expect(decodeJoinMessage(JSON.stringify({ type: 'offline' }))).toEqual({ type: 'offline' });
     expect(decodeJoinMessage(JSON.stringify({ type: 'snapshot', crews: [crew(3, 2, 1), crew(2, 0)] })))
       .toEqual({ type: 'snapshot', crews: [crew(3, 2, 1), crew(2, 0)] });
@@ -47,6 +47,10 @@ describe('wire', () => {
       JSON.stringify({ type: 'snapshot', crews: [{ ...crew(2, 1), size: -1 }] }),
       JSON.stringify({ type: 'snapshot', crews: [{ ...crew(2, 1), working: 1.5 }] }),
       JSON.stringify({ type: 'snapshot', crews: [{ ...crew(2, 1), counters: null }] }),
+      JSON.stringify({
+        type: 'snapshot',
+        crews: [{ size: 1, working: 1, blocked: 0, counters: emptyCounters() }],
+      }), // protocol-v2 crew omitted idle/done
       JSON.stringify({ type: 'snapshot', crews: [crew(2, 1, 0, { stints: -1 })] }),
       JSON.stringify({ type: 'snapshot', crews: [crew(2, 1, 0, { stints: 2_000_000_000 })] }),
       JSON.stringify({ type: 'focus', terminalID: 't1' }),
@@ -171,6 +175,42 @@ describe('participant registry', () => {
     expect(team.agents.map(car => car.agentKind)).toEqual(['crew 1/3', 'crew 0/2']);
     expect(team.agents.map(car => car.status)).toEqual(['working', 'blocked']);
     expect(team.agents.every(car => !car.isFocused)).toBe(true);
+  });
+
+  it('derives continuous crew state by blocked, working, all-done, all-idle priority', () => {
+    const registry = createParticipantRegistry('continuous');
+    registry.connect('mark');
+    const report = (
+      working: number, idle: number, done: number, blocked: number,
+    ): CrewReport => ({
+      size: working + idle + done + blocked,
+      working, idle, done, blocked, counters: emptyCounters(),
+    });
+
+    for (const [crewReport, expected] of [
+      [report(1, 0, 0, 1), 'blocked'],
+      [report(1, 1, 0, 0), 'working'],
+      [report(0, 0, 2, 0), 'done'],
+      [report(0, 2, 0, 0), 'idle'],
+      [report(0, 1, 1, 0), 'cruising'],
+    ] as const) {
+      registry.update('mark', [crewReport, emptyCrewReport()], 0);
+      expect(registry.snapshot().teams[0].agents[0].crewState).toBe(expected);
+    }
+  });
+
+  it('retains offline crew counts while forcing continuous pace to cruising', () => {
+    const registry = createParticipantRegistry('continuous');
+    registry.connect('mark');
+    registry.update('mark', [{
+      size: 2, working: 0, idle: 0, done: 0, blocked: 2, counters: emptyCounters(),
+    }, emptyCrewReport()], 0);
+    registry.markOffline('mark', 1);
+    const car = registry.snapshot().teams[0].agents[0];
+    expect(car.crewCounts).toEqual({ working: 0, idle: 0, done: 0, blocked: 2 });
+    expect(car.isLastKnown).toBe(true);
+    expect(car.status).toBe('idle');
+    expect(registry.paceFactors(1)[0].factor).toBe(0.75);
   });
 
   it('fields one car for a one-agent participant', () => {
@@ -347,6 +387,20 @@ describe('startHost', () => {
     expect(latest(syncs).phase).toBe('live');
   });
 
+  it('starts on a random circuit when the host omits --circuit', async () => {
+    host = await startHost({
+      port: 4960,
+      bindHost: '127.0.0.1',
+      random: () => 0.5,
+      raceMode: 'continuous',
+    });
+
+    const { syncs } = viewer(host.port);
+    await waitUntil(() => syncs.length > 0);
+    expect(latest(syncs).circuitID).toBe('suzuka');
+    expect(latest(syncs).totalLaps).toBe(53);
+  });
+
   it('pits a departed participant but keeps the team on the board', async () => {
     const port = await makeHost();
     const { socket } = await join(port, 'mark');
@@ -387,5 +441,23 @@ describe('startHost', () => {
       evil.once('error', () => {});
     });
     expect(status).toBe(403);
+  });
+});
+
+describe('multiplayer circuit rotation', () => {
+  it('selects the opening venue from every circuit when none is specified', () => {
+    expect(randomVenue(() => 0)).toBe('herdr');
+    expect(randomVenue(() => 0.5)).toBe('suzuka');
+    expect(randomVenue(() => 0.999999)).toBe('las-vegas');
+  });
+
+  it('uses every venue once per shuffle-bag cycle without a boundary repeat', () => {
+    const bag = createVenueShuffleBag('herdr', () => 0.5);
+    const restOfFirstCycle = Array.from({ length: 4 }, () => bag.next());
+    expect(new Set(['herdr', ...restOfFirstCycle]).size).toBe(5);
+
+    const secondCycle = Array.from({ length: 5 }, () => bag.next());
+    expect(new Set(secondCycle).size).toBe(5);
+    expect(secondCycle[0]).not.toBe(restOfFirstCycle.at(-1));
   });
 });

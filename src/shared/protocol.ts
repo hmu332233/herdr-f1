@@ -4,9 +4,9 @@ import type { RacePresentation } from './presentation.js';
  *  extrapolate marker positions from each
  *  entry's placement.progress + displaySpeed until the next sync.
  *
- *  `circuitID` is present only in multiplayer, where the venue is pinned when
- *  the host is launched: every viewer renders this circuit and the selector is
- *  locked. Absent in local mode, where the circuit is a per-browser choice. */
+ *  `circuitID` is present only in multiplayer, where the host owns the venue:
+ *  every viewer renders the same circuit and follows its between-race rotation.
+ *  Absent in local mode, where the circuit is a per-browser choice. */
 export type SyncMessage = { type: 'sync'; circuitID?: string } & RacePresentation;
 
 /** Browser → server.

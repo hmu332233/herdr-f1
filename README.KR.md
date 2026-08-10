@@ -81,6 +81,23 @@ npx herdr-f1 stop [--socket <path>]
 전역 설치한 경우에는 명령 앞의 `npx`를 생략할 수 있습니다. 기본 포트는 `4158`이며,
 이미 사용 중이면 다음 포트를 자동으로 찾습니다.
 
+### 멀티플레이어 레이스 모드
+
+호스트를 시작한 뒤 각 팀이 Herdr가 실행 중인 컴퓨터에서 출력된 `join` 명령을
+실행합니다. 기본값인 `classic`은 **기존 레이스**, `continuous`는 **상시 레이스**입니다.
+상시 레이스에서는 idle, done, 혼합 상태, 오프라인 팀도 순항 페이스로 계속 달립니다.
+blocked crew는 멈추고 실제로 대열을 형성하는 Safety Car를 발동합니다.
+
+```sh
+npx herdr-f1 host --race-mode classic
+npx herdr-f1 host --race-mode continuous
+npx herdr-f1 join <host[:port]> --name <team-name>
+```
+
+레이스 모드, 서킷 순환, 점수, 레이스 컨트롤은 호스트가 소유하며 viewer는 변경할 수
+없습니다. 상시 레이스는 모든 서킷을 한 번씩 사용한 뒤 다시 섞는 shuffle bag으로
+장소를 순환합니다.
+
 ## 동작 방식
 
 | Herdr 상태 | 대시보드 |

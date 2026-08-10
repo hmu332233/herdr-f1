@@ -17,6 +17,7 @@ const DESIGN_H = 540;
 const RADIUS = 12.5;
 const PIT_ROUTE_SECONDS = 1.4;
 const PIT_RETURN_SPEED = 1 / 12;
+const SAFETY_CAR_DISPLAY_SPEED = (1 / 18) * 0.4;
 /** Yellow-flag flash period, matching the blocked marker ring's 0.8 s loop so
  *  the track edge and the cars that caused it pulse together. */
 const FLAG_FLASH_PERIOD = 800;
@@ -406,6 +407,9 @@ export function createTrackRenderer(
         smoke.delete(id);
       }
     }
+    if (currentSync.raceControl.kind === 'safetyCar') {
+      drawSafetyCar(currentSync.raceControl.safetyCarProgress, elapsed);
+    }
   }
 
   // MARK: - Placement
@@ -543,6 +547,31 @@ export function createTrackRenderer(
 
   // MARK: - Marker drawing
 
+  function drawSafetyCar(progress: number | null, elapsed: number): void {
+    const point = progress === null
+      ? { x: layout.laneFrame.originX, y: layout.laneFrame.originY }
+      : pointAt(
+          (progress + elapsed * SAFETY_CAR_DISPLAY_SPEED) % 1,
+          layout.line,
+          layout.lengths,
+        );
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    ctx.beginPath();
+    ctx.roundRect(-16, -10, 32, 20, 5);
+    ctx.fillStyle = palette.flagYellow;
+    ctx.fill();
+    ctx.strokeStyle = palette.canvas;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = palette.canvas;
+    ctx.font = `900 9px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('SC', 0, 0.5);
+    ctx.restore();
+  }
+
   function drawMarker(
     ctx: CanvasRenderingContext2D, entry: EntryPresentation,
     x: number, y: number, nowMs: number,
@@ -641,7 +670,7 @@ export function createTrackRenderer(
     if (entry.placement.kind === 'nextGrid') {
       ctx.fillStyle = palette.textMuted;
       ctx.fillText('NEXT GRID', 0, radius() + 6);
-    } else if (entry.status === 'idle') {
+    } else if (entry.status === 'idle' && entry.placement.kind === 'pit') {
       ctx.fillStyle = palette.statusPit;
       ctx.fillText('PIT', 0, radius() + 6);
     }

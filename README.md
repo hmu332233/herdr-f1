@@ -84,6 +84,23 @@ npx herdr-f1 stop [--socket <path>]
 If installed globally, you can omit `npx`. The default port is `4158`; if it is
 already in use, Herdr F1 automatically finds the next available port.
 
+### Multiplayer race modes
+
+Start a host, then have each team run the printed `join` command on a machine
+with Herdr. `classic` remains the default. `continuous` keeps idle, completed,
+mixed-state, and offline teams circulating at cruising pace; blocked crews stop
+and deploy a queue-forming Safety Car.
+
+```sh
+npx herdr-f1 host --race-mode classic
+npx herdr-f1 host --race-mode continuous
+npx herdr-f1 join <host[:port]> --name <team-name>
+```
+
+The host owns race mode, venue rotation, scoring, and race control. Viewers can
+see those rules but cannot change them. Continuous mode rotates venues with a
+shuffle bag, showing every circuit once before reshuffling.
+
 ## How it works
 
 | Herdr status | Dashboard |
