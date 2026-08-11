@@ -30,10 +30,12 @@ A vehicle's crew state uses this priority order:
 
 Vehicle pace is part of official scoring, not a display-only animation:
 
-- `IDLE`, `DONE`, and `CRUISING` run at `0.75x` nominal pace.
+- `IDLE`, `DONE`, and `CRUISING` run at `0.98x` nominal pace.
 - `WORKING` changes immediately to `1.0x` nominal pace.
-- Sustained working retains multiplayer's rolling 90-second uptime incentive and increases pace up to `1.25x`.
-- Per-lap random variation is reduced to `±2%`, so flavour does not obscure state and uptime.
+- Sustained working retains multiplayer's rolling 90-second uptime incentive and increases pace up to `1.02x`.
+- Per-lap random variation is reduced to `±0.5%`, so flavour does not obscure state and uptime.
+- Green-flag running gives lower-ranked individual cars a smooth catch-up correction of up to `+0.04x`. Rank determines eligibility, while the correction fades in with the actual gap to the leader and reaches its maximum at half a lap behind.
+- A `WORKING` car within `0.08` laps behind an `IDLE`, `DONE`, `CRUISING`, or offline car receives a temporary `+0.04x` passing boost. The boost disappears immediately after the pass or if the car ahead starts working.
 - `BLOCKED` runs at `0x` and stops on the circuit.
 - All visible movement advances official distance and therefore affects laps, gaps, position, and the finish.
 
@@ -45,7 +47,7 @@ A disconnected join client or unavailable local Herdr feed does not stop its veh
 
 - The team is prominently labelled `TEAM OFFLINE`.
 - Its retained crew report is dimmed and labelled `LAST KNOWN` rather than presented as live truth.
-- Its vehicles continue at the `0.75x` cruising pace and keep accumulating official distance.
+- Its vehicles continue at the `0.98x` cruising pace and keep accumulating official distance.
 - A stale blocked report does not maintain or trigger a Safety Car period.
 
 This deliberately favours a continuously active race display. The card, rather than motion, communicates loss of telemetry.
@@ -111,5 +113,5 @@ The multiplayer wire report must carry current idle and done counts in addition 
 - Continuous mode needs explicit race-control phases for Safety Car deployment, withdrawal, and the transient green flag.
 - Queue order and gap control become authoritative simulation state and require deterministic tests, including wrap-around, lapped cars, recovery, new entrants, and a new block during withdrawal.
 - Host and join clients must upgrade together when the crew report gains idle and done counts.
-- A cruising or offline team can still finish a race, but sustained working is always faster. This is intentional: the mode rewards activity without making the track go dormant.
+- A cruising or offline team can still finish a race. Sustained working has a small intrinsic advantage, while the catch-up correction keeps the field close without changing Safety Car order.
 - Classic-mode behaviour must be covered by regression tests so adding continuous mode cannot silently change the default.

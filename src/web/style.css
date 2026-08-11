@@ -34,9 +34,7 @@ body {
 .muted { color: var(--text-muted); }
 .push-right { margin-left: auto; }
 
-/* Fixed ~55/45 two-column composition with a hairline divider, over a
-   full-width radio ticker on a fixed-height second row. The ticker's height
-   is fixed so the track canvas always has a stable box to resize into. */
+/* Personal mode keeps the original CONSTRUCTORS + TEAM RADIO layout. */
 #app {
   display: grid;
   grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
@@ -51,6 +49,7 @@ body {
 
 #track-column,
 #standings-column,
+#team-column,
 #radio-column {
   display: flex;
   min-width: 0;
@@ -60,15 +59,28 @@ body {
 }
 #track-column { border-right: 1px solid var(--border); }
 #standings-column { background: var(--panel); }
+#team-column[hidden], #radio-column[hidden] { display: none; }
+
+/* Multiplayer replaces the personal ticker with the MY TEAM timing table. */
+html.is-multiplayer #app { grid-template-rows: minmax(0, 1fr) 190px; }
+#team-column {
+  grid-column: 1 / -1;
+  /* 46px chrome + column labels + three full timing rows. Additional team
+     vehicles remain available through the dashboard's internal scroll. */
+  height: 190px;
+  position: relative;
+  z-index: 2;
+  background: #11151b;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+#team-column > .chrome { background: #141820; }
+#team-column .panel-title { color: #fff; font-weight: 800; }
 #radio-column {
   grid-column: 1 / -1;
-  /* 46px chrome + four ~26px rows + padding: a whole number of rows, so the
-     newest lines never sit half-clipped at the fold. */
   height: 158px;
   background: var(--panel);
   border-top: 1px solid var(--border);
 }
-/* Collapsed: header only. The track's ResizeObserver reclaims the space. */
 #radio-column.is-collapsed { height: 46px; }
 #radio-column.is-collapsed #radio-scroll { display: none; }
 
@@ -252,6 +264,7 @@ body {
 
 /* Standings. */
 #standings-scroll { flex: 1 1 0; min-width: 0; min-height: 0; overflow-y: auto; padding: 12px; }
+html.is-multiplayer #standings-scroll { padding: 0; }
 /* Workspaces laid out side by side. auto-fill rather than a fixed column count
    or a breakpoint: the track column takes most of the window, so how many cards
    fit depends on the window, the collapsed state of the radio, and how wide the
@@ -379,6 +392,7 @@ body {
 .agent-status { padding: 2px 5px; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8.5px; font-weight: 700; letter-spacing: 0.5px; }
 .agent-stint { font-size: 8px; font-weight: 800; letter-spacing: 1px; }
 .crew-detail { grid-column: 2 / span 2; display: flex; align-items: center; gap: 7px; min-width: 0; }
+.crew-detail[hidden] { display: none; }
 .crew-bar { display: flex; width: 72px; height: 4px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,0.08); }
 .crew-bar span { height: 100%; }
 .crew-working { background: #32d74b; }
@@ -404,6 +418,232 @@ body {
   content: '';
 }
 .onboard-tag[hidden] { display: none; }
+
+/* Individual vehicle leaderboard. These rules intentionally come after the
+   legacy constructor-card selectors above: the new DOM keeps one stable card
+   per car so standings.ts can animate rank changes without rebuilding it. */
+html.is-multiplayer #standings { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+.vehicle-card {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  box-shadow: none;
+  will-change: transform;
+}
+.vehicle-card.is-offline { border-color: rgba(255,255,255,0.2); opacity: 0.68; }
+.vehicle-card.is-onboard {
+  background: color-mix(in srgb, var(--team-color) 4%, transparent);
+}
+.vehicle-card.is-my-team {
+  background: color-mix(in srgb, var(--team-color) 3%, transparent);
+}
+.vehicle-card.is-my-team .vehicle-rank::after {
+  display: block;
+  margin-top: 1px;
+  color: var(--team-color);
+  font-size: 6px;
+  font-weight: 900;
+  letter-spacing: 0.7px;
+  content: 'MY';
+}
+.vehicle-card.is-yellow-flag {
+  background: color-mix(in srgb, var(--flag-yellow) 10%, var(--card));
+  animation: card-flag-flash var(--flag-flash) ease-in-out infinite alternate;
+}
+.vehicle-card.rank-gained { background: rgba(255,255,255,0.025); }
+.vehicle-card.rank-lost { opacity: 0.94; }
+.vehicle-row {
+  display: grid;
+  grid-template-columns: 42px 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 62px;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.vehicle-row:hover { background: var(--row-hover); }
+.vehicle-row:focus-visible { outline: 1px solid rgba(255, 255, 255, 0.35); outline-offset: -3px; border-radius: 6px; }
+.vehicle-rank { font-size: 16px; font-weight: 900; letter-spacing: -0.5px; color: var(--text-soft); }
+.vehicle-card:first-child .vehicle-rank { color: #fff; }
+.vehicle-chip {
+  min-width: 32px;
+  padding: 3px 5px;
+  border-radius: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+  filter: saturate(0.78);
+}
+.vehicle-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vehicle-identity { display: block; min-width: 0; overflow: hidden; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.vehicle-team { color: var(--text-soft); font-weight: 800; letter-spacing: 0.8px; }
+.vehicle-separator { color: var(--text-muted); }
+.vehicle-tab { color: #fff; font-weight: 650; }
+.vehicle-meta { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.vehicle-kind { min-width: 0; overflow: hidden; font-size: 8.5px; font-weight: 650; letter-spacing: 0.8px; color: var(--text-muted); white-space: nowrap; text-overflow: ellipsis; }
+.vehicle-status { flex: none; padding: 2px 5px; border-radius: 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; font-weight: 750; letter-spacing: 0.5px; }
+.vehicle-stint, .vehicle-alert { flex: none; font-size: 7.5px; font-weight: 850; letter-spacing: 0.8px; }
+.vehicle-alert { color: var(--text-soft); }
+.vehicle-telemetry { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 78px; white-space: nowrap; }
+.vehicle-gap { font-size: 10px; font-weight: 850; color: #fff; }
+.vehicle-distance { font-size: 8px; font-weight: 650; color: var(--text-muted); }
+.vehicle-card .crew-detail { grid-column: auto; }
+
+/* MY TEAM: a browser-local garage view. The selector identifies this viewer's
+   participant without changing host-owned multiplayer state. */
+#my-team-picker { display: inline-flex; min-width: 0; }
+#my-team-select {
+  appearance: none;
+  min-width: 130px;
+  max-width: 240px;
+  padding: 4px 22px 4px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  background: transparent;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: right 10px center, right 6px center;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  color: var(--text-soft);
+  font: 750 9px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.7px;
+}
+#my-team-select:focus-visible { outline: 1px solid rgba(255,255,255,0.35); outline-offset: 1px; }
+#my-team-summary { color: rgba(255,255,255,0.62); font-size: 9px; font-weight: 750; letter-spacing: 0.8px; }
+#my-team-dashboard { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; padding: 0 12px; overflow: hidden; }
+#my-team-cars {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  overflow: auto;
+  border-top: 1px solid rgba(255,255,255,0.09);
+}
+#my-team-cars[hidden] { display: none; }
+#my-team-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 2px; }
+#my-team-empty[hidden] { display: none; }
+.my-team-grid {
+  display: grid;
+  grid-template-columns: 3px 42px 48px 190px 88px 112px 64px 100px 180px;
+  align-items: center;
+  column-gap: 14px;
+  min-width: 940px;
+  justify-content: start;
+}
+.my-team-table-header {
+  flex: 0 0 23px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-muted);
+  font: 750 8px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.9px;
+}
+.my-car {
+  position: relative;
+  flex: 1 0 38px;
+  min-height: 38px;
+  padding: 0 16px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
+  box-shadow: none;
+}
+.my-car:last-child { border-bottom: 0; }
+.my-car.is-working { background: rgba(255,255,255,0.025); }
+.my-car.is-offline { opacity: 0.62; }
+.my-car.is-blocked { background: color-mix(in srgb, var(--flag-yellow) 4%, transparent); }
+.my-car-marker { width: 3px; height: 18px; border-radius: 1px; opacity: 0.78; }
+.my-car-number { color: #fff; font-size: 13px; font-weight: 850; }
+.my-car-position { color: #fff; font-size: 13px; font-weight: 850; }
+.my-car-session {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.my-car-state {
+  min-width: 0;
+  overflow: hidden;
+  font: 750 9px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.65px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.my-car-gap { color: #fff; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.my-car-pace, .my-car-stint, .my-car-counts {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.my-car-counts { letter-spacing: 0.35px; }
+.my-car-freshness { position: absolute; right: 6px; top: 3px; color: var(--text-soft); font-size: 6px; font-weight: 800; letter-spacing: 0.6px; }
+
+/* Public TV-style radio graphic over the race feed. It is deliberately
+   non-interactive: every viewer sees the same host-authored race event. */
+#broadcast-radio {
+  --radio-team-color: #e10600;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 25;
+  width: min(160px, calc(100% - 24px));
+  padding: 7px 8px 8px;
+  overflow: hidden;
+  background: rgba(10, 12, 16, 0.9);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-left: 2px solid color-mix(in srgb, var(--radio-team-color) 72%, transparent);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+  pointer-events: none;
+}
+#broadcast-radio[hidden] { display: none; }
+#broadcast-radio::after { display: none; }
+.broadcast-radio-header { display: flex; align-items: baseline; gap: 6px; }
+.broadcast-radio-team { min-width: 0; overflow: hidden; color: var(--radio-team-color); font-size: 9px; font-weight: 900; letter-spacing: 0.7px; white-space: nowrap; text-overflow: ellipsis; }
+.broadcast-radio-label { margin-left: auto; color: #fff; font-size: 8.5px; font-weight: 900; letter-spacing: 0.6px; }
+.broadcast-radio-signal { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 5px; margin-top: 5px; padding-bottom: 5px; border-bottom: 1px solid var(--hairline); }
+.broadcast-radio-chip { min-width: 27px; padding: 2px 4px; border-radius: 2px; font-size: 10.5px; font-weight: 900; text-align: center; filter: saturate(0.78); }
+.broadcast-radio-waveform { display: flex; align-items: center; gap: 1px; height: 13px; overflow: hidden; }
+.broadcast-radio-waveform i { flex: 1 1 0; min-width: 1px; max-width: 3px; background: var(--radio-team-color); opacity: 0.58; }
+.broadcast-radio-lap { color: var(--text-muted); font-size: 6px; font-weight: 750; }
+.broadcast-radio-quote {
+  display: -webkit-box;
+  margin: 6px 0 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 850;
+  line-height: 1.2;
+  letter-spacing: 0.15px;
+  -webkit-box-orient: vertical;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: 1;
+}
+.broadcast-radio-source { display: none; }
+#broadcast-radio.is-entering { animation: broadcast-in 240ms ease-out; }
+#broadcast-radio.is-leaving { animation: broadcast-out 220ms ease-in forwards; }
+@keyframes broadcast-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@keyframes broadcast-out { to { opacity: 0; transform: translateX(-8px); } }
 
 /* Team radio. Generated race commentary driven by agent status changes —
    never terminal output. */
@@ -531,7 +771,10 @@ body {
      same query — see track.ts drawYellowFlagEdge. */
   #flag-pill,
   #track-wrap.is-yellow-flag::after,
-  .agent-row.is-yellow-flag { animation: none; }
+  .agent-row.is-yellow-flag,
+  .vehicle-card.is-yellow-flag,
+  #broadcast-radio,
+  .broadcast-radio-waveform i { animation: none; }
 }
 
 /* ── Narrow viewports ─────────────────────────────────────────────────────────
@@ -541,7 +784,7 @@ body {
    with the circuit drawn tiny in the middle of it.
 
    So the columns stack. The page itself still never scrolls: as on desktop the
-   app fills the viewport and CONSTRUCTORS scrolls inside its own pane, so the
+   app fills the viewport and STANDINGS scrolls inside its own pane, so the
    track and the header stay put while the standings are browsed.
 
    900px is where the 45% standings column stops fitting a `workspace / tab`
@@ -549,7 +792,7 @@ body {
 @media (max-width: 900px) {
   #app {
     grid-template-columns: minmax(0, 1fr);
-    /* The track takes the height its aspect ratio asks for, the radio its capped
+    /* The track takes the height its aspect ratio asks for, MY TEAM its capped
        height, and the standings absorb what is left — that 1fr is what gives the
        standings pane a bounded box to scroll inside. */
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -584,15 +827,21 @@ body {
 
   #standings-column { border-bottom: none; }
 
-  #radio-column {
+  #team-column {
     /* Stacked it is a normal row rather than a full-width band under two
        columns, but it keeps its own internal scroll. */
     grid-column: auto;
     border-top: 1px solid var(--border);
-    /* The desktop 158px is four whole rows. Stacked, three panes share the
+    /* The desktop 190px shows labels plus three rows. Stacked, three panes share the
        viewport height, so on a short screen that fixed band starves the
        standings — at 390px tall it left them 10px. Capping it as a share of the
-       viewport keeps the radio a ticker rather than a third of the screen. */
+       viewport keeps MY TEAM a compact timing table rather than a third of the screen. */
+    height: min(158px, 28dvh);
+  }
+
+  #radio-column {
+    grid-column: auto;
+    border-top: 1px solid var(--border);
     height: min(158px, 28dvh);
   }
   #radio-column.is-collapsed { height: 46px; }
@@ -659,6 +908,37 @@ body {
 
   #standings-scroll { padding: 8px; }
   #standings { gap: 8px; }
+  html.is-multiplayer #standings-scroll { padding: 8px; }
+  html.is-multiplayer #standings { gap: 8px; }
+
+  #my-team-picker { min-width: 0; }
+  #my-team-select { min-width: 0; max-width: 128px; }
+  #my-team-summary { margin-left: 0; }
+  #my-team-dashboard { padding: 0 8px; }
+  .my-team-grid { min-width: 720px; column-gap: 10px; }
+  .my-team-table-header, .my-car { padding-inline: 10px; }
+  #broadcast-radio { top: 8px; left: 8px; width: min(145px, calc(100% - 16px)); padding: 6px 7px 7px; }
+  .broadcast-radio-team, .broadcast-radio-label { font-size: 9px; }
+  .broadcast-radio-quote { font-size: 8px; }
+
+  .vehicle-row {
+    grid-template-columns: 36px 30px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 64px;
+    padding: 8px 10px 8px 12px;
+  }
+  .vehicle-rank { font-size: 14px; }
+  .vehicle-chip { min-width: 28px; font-size: 10px; }
+  .vehicle-telemetry {
+    grid-column: 3;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+  .vehicle-distance { display: none; }
+  .vehicle-meta { flex-wrap: wrap; row-gap: 3px; }
+  .vehicle-card .crew-detail { flex-wrap: wrap; row-gap: 3px; }
 
   .agent-row {
     /* Chip on its own column, text stacked beside it: the label gets the full

@@ -5204,7 +5204,7 @@ const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(impor
  * Owns the server-side tick: advances the race session on a fixed cadence and
  * fans full sync messages out to connected browsers.
  */
-function createRaceBroadcaster(session, clock, tickMs = 250, 
+function createRaceBroadcaster(session, clock, tickMs = 250,
 /** Multiplayer only: the host-owned venue stamped on every sync so viewers
  *  render it and lock their selector. A getter lets the host rotate venues
  *  between Grands Prix. Local mode omits it. */
@@ -5334,8 +5334,19 @@ const MultiplayerRules = {
      *  randomness stays as flavor only (±5% against local's ±25%). */
     paceJitterHalfWidth: 0.05,
     /** Continuous mode keeps state and uptime legible by narrowing flavour. */
-    continuousPaceJitterHalfWidth: 0.02,
-    cruisingFactor: 0.75,
+    continuousPaceJitterHalfWidth: 0.005,
+    /** Continuous cars always circulate close to nominal pace. Activity is a
+     *  small advantage rather than enough to split the field quickly. */
+    cruisingFactor: 0.98,
+    continuousWorkingBonusSpan: 0.02,
+    /** Green-flag rubber band. Rank decides how much of the correction a car is
+     *  eligible for; its gap to the leader fades the correction in smoothly. */
+    continuousCatchupMax: 0.04,
+    continuousCatchupFullGap: 0.5,
+    /** A working car close behind a cruising car gets a short passing burst.
+     *  It disappears as soon as the pass is complete or the target works. */
+    continuousOvertakeBoost: 0.04,
+    continuousOvertakeRange: 0.08,
     safetyCarLeaderFactor: 0.4,
     safetyCarCatchupFactor: 0.8,
     /** Approximate 1.5 marker lengths as a fraction of a lap. */
@@ -6053,6 +6064,10 @@ wallClock = () => new Date(), options = {}) {
         scoreContinuousGreen(elapsed);
     }
     function scoreContinuousGreen(elapsed) {
+        // Freeze the factors for this scoring step. The finish probe and commit
+        // pass must use the same rubber-band correction, even if a pass would
+        // change the order by the end of the step.
+        const factors = continuousGreenFactors();
         let earliestFinish = elapsed;
         let finisher = null;
         for (const entry of entries.values()) {
@@ -6060,7 +6075,7 @@ wallClock = () => new Date(), options = {}) {
                 continue;
             const official = { value: entry.official };
             const pace = { ...entry.pace };
-            const unused = walk(official, pace, entry.terminalID, elapsed, continuousNormalFactor(entry));
+            const unused = walk(official, pace, entry.terminalID, elapsed, factors.get(entry.terminalID) ?? continuousNormalFactor(entry));
             if (official.value >= totalLaps) {
                 const finishTime = elapsed - unused;
                 if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
@@ -6074,7 +6089,7 @@ wallClock = () => new Date(), options = {}) {
             if (!isContinuousRunner(entry))
                 continue;
             const official = { value: entry.official };
-            walk(official, entry.pace, entry.terminalID, budget, continuousNormalFactor(entry));
+            walk(official, entry.pace, entry.terminalID, budget, factors.get(entry.terminalID) ?? continuousNormalFactor(entry));
             entry.official = official.value;
             entry.display = official.value;
         }
@@ -6138,7 +6153,34 @@ wallClock = () => new Date(), options = {}) {
     function continuousNormalFactor(entry) {
         if (entry.isLastKnown || entry.crewState !== 'working')
             return MultiplayerRules.cruisingFactor;
-        return Math.min(1.25, Math.max(1, entry.externalPace));
+        return Math.min(1 + MultiplayerRules.continuousWorkingBonusSpan, Math.max(1, entry.externalPace));
+    }
+    /** Individual-car green-flag pace. A position-only boost would make two
+     *  side-by-side cars swap a large bonus on every pass, so rank determines
+     *  eligibility while the actual leader gap fades the correction in. */
+    function continuousGreenFactors() {
+        const runners = [...entries.values()]
+            .filter(isContinuousRunner)
+            .sort((a, b) => b.official - a.official || compareOrderKeys(orderKey(a), orderKey(b)));
+        const factors = new Map();
+        const leaderDistance = runners[0]?.official ?? 0;
+        const lastIndex = runners.length - 1;
+        runners.forEach((entry, index) => {
+            const rankShare = lastIndex <= 0 ? 0 : index / lastIndex;
+            const leaderGap = Math.max(0, leaderDistance - entry.official);
+            const gapShare = Math.min(1, leaderGap / MultiplayerRules.continuousCatchupFullGap);
+            const catchup = MultiplayerRules.continuousCatchupMax * rankShare * gapShare;
+            const ahead = index > 0 ? runners[index - 1] : undefined;
+            const gapToAhead = ahead ? Math.max(0, ahead.official - entry.official) : Infinity;
+            const canPassCruiser = entry.crewState === 'working'
+                && !entry.isLastKnown
+                && ahead !== undefined
+                && (ahead.crewState !== 'working' || ahead.isLastKnown)
+                && gapToAhead <= MultiplayerRules.continuousOvertakeRange;
+            const overtake = canPassCruiser ? MultiplayerRules.continuousOvertakeBoost : 0;
+            factors.set(entry.terminalID, continuousNormalFactor(entry) + catchup + overtake);
+        });
+        return factors;
     }
     function isDriving(entry) {
         return entry.status === 'working' && !entry.isRetired && !entry.isQueuedNextGrid;
@@ -6610,6 +6652,7 @@ wallClock = () => new Date(), options = {}) {
         // One condition for the whole presentation: every entry reports the display
         // speed it is actually being scored at.
         const paceFactor = fieldPaceFactor();
+        const continuousFactors = raceMode === 'continuous' ? continuousGreenFactors() : undefined;
         // A workspace whose every entry has retired leaves the standings (and the
         // podium) entirely. The entries themselves stay in the session, so a
         // terminal reappearing before race end restores the team with its
@@ -6649,10 +6692,10 @@ wallClock = () => new Date(), options = {}) {
                 .sort((a, b) => quantized(b.official) - quantized(a.official) ||
                 a.carNumber - b.carNumber ||
                 compareStrings(a.terminalID, b.terminalID))
-                .map(entry => present(entry, paceFactor)),
+                .map(entry => present(entry, paceFactor, continuousFactors)),
         }));
     }
-    function present(entry, paceFactor) {
+    function present(entry, paceFactor, continuousFactors) {
         const lap = lapOf(entry, totalLaps);
         const progress = entry.display - Math.floor(entry.display);
         let placement;
@@ -6711,7 +6754,7 @@ wallClock = () => new Date(), options = {}) {
             lap,
             statusText,
             placement,
-            displaySpeed: displaySpeed(entry, paceFactor),
+            displaySpeed: displaySpeed(entry, paceFactor, continuousFactors),
             isFocused: entry.isFocused,
             showsNewStint: entry.newStintUntil !== null && raceTime < entry.newStintUntil,
             causesYellowFlag: causesYellowFlag(entry),
@@ -6719,7 +6762,7 @@ wallClock = () => new Date(), options = {}) {
     }
     /** Display motion in laps/second the client uses to extrapolate between
      *  syncs. Mirrors the motion the server itself applies in step(). */
-    function displaySpeed(entry, paceFactor) {
+    function displaySpeed(entry, paceFactor, continuousFactors) {
         if (connection.kind !== 'live')
             return 0;
         if (entry.isRetired || entry.isQueuedNextGrid)
@@ -6741,7 +6784,7 @@ wallClock = () => new Date(), options = {}) {
                 }
                 return RaceRules.baseSpeed
                     * (entry.pace.lap === -1 ? 1 : entry.pace.multiplier)
-                    * continuousNormalFactor(entry);
+                    * (continuousFactors?.get(entry.terminalID) ?? continuousNormalFactor(entry));
             }
             if (entry.status === 'working') {
                 return RaceRules.baseSpeed
@@ -7635,7 +7678,9 @@ function createParticipantRegistry(raceMode = 'classic') {
                 factors.push({
                     terminalID: `${participant.name}/car${index + 1}`,
                     factor: raceMode === 'continuous'
-                        ? (!live || state !== 'working' ? MultiplayerRules.cruisingFactor : 1 + 0.25 * uptime)
+                        ? (!live || state !== 'working'
+                            ? MultiplayerRules.cruisingFactor
+                            : 1 + MultiplayerRules.continuousWorkingBonusSpan * uptime)
                         : MultiplayerRules.uptimeFloor + MultiplayerRules.uptimeSpan * uptime,
                 });
             });

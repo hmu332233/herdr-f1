@@ -576,7 +576,7 @@ export function createTrackRenderer(
     ctx: CanvasRenderingContext2D, entry: EntryPresentation,
     x: number, y: number, nowMs: number,
   ): void {
-    const color = teamColor(entry.colorToken);
+    const color = teamColor(entry.colorToken, sync?.circuitID !== undefined);
     ctx.save();
     ctx.translate(x, y);
 
@@ -1014,7 +1014,7 @@ export function createTrackRenderer(
       ctx.fill();
       ctx.stroke();
 
-      ctx.fillStyle = teamColor(team.colorToken);
+      ctx.fillStyle = teamColor(team.colorToken, sync.circuitID !== undefined);
       roundedRect(
         ctx, localX - (bayWidth - 4 * ds) / 2, centerY - 12 * ds - 1.5 * ds,
         bayWidth - 4 * ds, 3 * ds, 1,

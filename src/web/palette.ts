@@ -15,32 +15,37 @@ export const palette = {
   /** Marshal's yellow. Brighter and less orange than statusBlocked so a flashing
    *  track edge reads as a track condition rather than as another status chip. */
   flagYellow: '#FFD400',
-  /** Constructor liveries, one per palette slot. This is a max-contrast
-   *  sequence for the dashboard's near-black background: the earliest colors
-   *  deliberately jump between distant hues, so the common 2–6 team field is
-   *  distinguishable at a glance. The server hands them out in this order and
-   *  never changes an existing team's slot during the session.
+  /** Original high-contrast constructor colours used by the personal dashboard. */
+  localTeamColors: [
+    '#FF8C1A', '#C44DFF', '#00E6E6', '#00E600', '#FF4D88', '#2B8CEE',
+    '#D4D411', '#ECB093', '#EC93EC', '#22C373', '#93BFEC',
+  ],
+  /** Muted 2026 F1 live-timing team colours, one per palette slot. The order
+   *  separates similar reds and blues so generic Herdr teams remain readable
+   *  without returning to the previous neon rainbow. The server hands them out
+   *  in this order and never changes an existing team's slot during a session.
    *
    *  Keep this the same length as RaceRules.paletteSize — the server hands out
    *  slot indices against that count, and a shorter array here would wrap two
    *  teams onto one colour. */
   teamColors: [
-    '#FF8C1A', // orange
-    '#C44DFF', // purple
-    '#00E6E6', // cyan
-    '#00E600', // green
-    '#FF4D88', // rose
-    '#2B8CEE', // blue
-    '#D4D411', // yellow
-    '#ECB093', // peach
-    '#EC93EC', // lilac
-    '#22C373', // emerald
-    '#93BFEC', // sky blue
+    '#F47600', // McLaren papaya
+    '#00D7B6', // Mercedes teal
+    '#ED1131', // Ferrari red
+    '#4781D7', // Red Bull blue
+    '#229971', // Aston Martin green
+    '#9C9FA2', // Haas silver
+    '#F50537', // Audi red
+    '#1868DB', // Williams blue
+    '#909090', // Cadillac grey
+    '#00A1E8', // Alpine blue
+    '#6C98FF', // Racing Bulls blue
   ],
 } as const;
 
-export function teamColor(token: TeamColorToken): string {
-  return palette.teamColors[token.slot % palette.teamColors.length];
+export function teamColor(token: TeamColorToken, multiplayer = false): string {
+  const colors = multiplayer ? palette.teamColors : palette.localTeamColors;
+  return colors[token.slot % colors.length];
 }
 
 export function rowStatusColor(entry: EntryPresentation): string {

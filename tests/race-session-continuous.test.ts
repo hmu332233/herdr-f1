@@ -35,7 +35,7 @@ function continuous(...cars: ReturnType<typeof car>[]) {
 }
 
 describe('continuous vehicle pace', () => {
-  it('scores idle, done, and mixed crews at 0.75x official pace', () => {
+  it('scores idle, done, and mixed crews at the compressed cruising pace', () => {
     const session = continuous(
       car('idle', 'idle', counts(0, 2, 0, 0)),
       car('done', 'done', counts(0, 0, 2, 0)),
@@ -44,30 +44,84 @@ describe('continuous vehicle pace', () => {
     tickTo(session, 0, RaceRules.baseLapDuration);
     for (const id of ['idle', 'done', 'mixed']) {
       const entry = entryById(session.presentation(), id);
-      expect(entry.officialDistance).toBeCloseTo(0.75, 8);
+      expect(entry.officialDistance).toBeCloseTo(MultiplayerRules.cruisingFactor, 8);
       expect(entry.placement.kind).toBe('track');
     }
   });
 
-  it('changes working immediately to 1.0x and accepts its sustained uptime bonus', () => {
+  it('changes working immediately to 1.0x and caps its sustained uptime bonus at 1.02x', () => {
     const session = continuous(car('worker', 'working', counts(1, 0, 0, 0)));
     tickTo(session, 0, RaceRules.baseLapDuration);
     expect(entryById(session.presentation(), 'worker').officialDistance).toBeCloseTo(1, 8);
 
     session.setExternalPace('worker', 1.25, RaceRules.baseLapDuration);
     tickTo(session, RaceRules.baseLapDuration, RaceRules.baseLapDuration * 2);
-    expect(entryById(session.presentation(), 'worker').officialDistance).toBeCloseTo(2.25, 8);
+    expect(entryById(session.presentation(), 'worker').officialDistance).toBeCloseTo(2.02, 8);
   });
 
   it('keeps an offline stale block cruising without deploying the Safety Car', () => {
     const session = continuous(car('offline', 'blocked', counts(0, 0, 0, 2), true));
     tickTo(session, 0, RaceRules.baseLapDuration);
     const presentation = session.presentation();
-    expect(entryById(presentation, 'offline').officialDistance).toBeCloseTo(0.75, 8);
+    expect(entryById(presentation, 'offline').officialDistance)
+      .toBeCloseTo(MultiplayerRules.cruisingFactor, 8);
     expect(entryById(presentation, 'offline').isLastKnown).toBe(true);
     expect(presentation.teams[0].isOffline).toBe(true);
     expect(presentation.flag).toEqual({ kind: 'green' });
     expect(presentation.raceControl).toEqual({ kind: 'green' });
+  });
+
+  it('smoothly boosts a lower-ranked car according to rank and leader gap', () => {
+    const session = continuous(car('leader', 'working', counts(1, 0, 0, 0)));
+    tickTo(session, 0, 9);
+    session.applySnapshot(snap(team('alpha', 'alpha', [
+      car('leader', 'working', counts(1, 0, 0, 0)),
+      car('follower', 'working', counts(1, 0, 0, 0)),
+    ])), 9);
+
+    const before = session.presentation();
+    const initialGap = entryById(before, 'leader').officialDistance
+      - entryById(before, 'follower').officialDistance;
+    expect(initialGap).toBeCloseTo(RaceRules.newEntrantDeficit, 8);
+    expect(entryById(before, 'follower').displaySpeed)
+      .toBeGreaterThan(entryById(before, 'leader').displaySpeed);
+
+    tickTo(session, 9, 27);
+    const after = session.presentation();
+    const finalGap = entryById(after, 'leader').officialDistance
+      - entryById(after, 'follower').officialDistance;
+    expect(finalGap).toBeLessThan(initialGap);
+  });
+
+  it('gives a working car a short boost to pass a nearby cruising car', () => {
+    const session = continuous(car('cruiser', 'idle', counts(0, 1, 0, 0)));
+    tickTo(session, 0, 9);
+    session.applySnapshot(snap(team('alpha', 'alpha', [
+      car('cruiser', 'idle', counts(0, 1, 0, 0)),
+      car('worker', 'working', counts(1, 0, 0, 0)),
+    ])), 9);
+
+    let now = 9;
+    while (now < 90) {
+      const view = session.presentation();
+      const gap = entryById(view, 'cruiser').officialDistance
+        - entryById(view, 'worker').officialDistance;
+      if (gap <= MultiplayerRules.continuousOvertakeRange) break;
+      now = tickTo(session, now, now + 1);
+    }
+
+    const inRange = session.presentation();
+    const cruiser = entryById(inRange, 'cruiser');
+    const worker = entryById(inRange, 'worker');
+    expect(cruiser.officialDistance - worker.officialDistance)
+      .toBeLessThanOrEqual(MultiplayerRules.continuousOvertakeRange);
+    expect(worker.displaySpeed - cruiser.displaySpeed)
+      .toBeGreaterThan(RaceRules.baseSpeed * 0.05);
+
+    tickTo(session, now, now + 25);
+    const after = session.presentation();
+    expect(entryById(after, 'worker').officialDistance)
+      .toBeGreaterThan(entryById(after, 'cruiser').officialDistance);
   });
 });
 

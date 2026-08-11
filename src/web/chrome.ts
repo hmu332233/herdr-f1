@@ -81,7 +81,7 @@ export function createChrome() {
   function renderOverlay(sync: SyncMessage, entryCount: number): void {
     if (sync.phase === 'podium' && sync.podium) {
       overlay.hidden = false;
-      overlay.replaceChildren(podiumPanel(sync.podium));
+      overlay.replaceChildren(podiumPanel(sync.podium, sync.circuitID !== undefined));
       return;
     }
     const content = overlayContent(sync);
@@ -144,7 +144,7 @@ function overlayContent(
   }
 }
 
-function podiumPanel(podium: PodiumResult): HTMLElement {
+function podiumPanel(podium: PodiumResult, multiplayer: boolean): HTMLElement {
   const panel = document.createElement('div');
   panel.className = 'podium-panel';
   const title = document.createElement('div');
@@ -162,7 +162,7 @@ function podiumPanel(podium: PodiumResult): HTMLElement {
     rank.textContent = `P${team.rank}`;
     const chip = document.createElement('span');
     chip.className = 'podium-chip';
-    chip.style.background = teamColor(team.colorToken);
+    chip.style.background = teamColor(team.colorToken, multiplayer);
     const name = document.createElement('span');
     name.className = 'podium-name';
     name.textContent = team.label.toUpperCase();

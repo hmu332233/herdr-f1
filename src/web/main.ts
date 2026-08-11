@@ -1,6 +1,7 @@
 import './style.css';
 import { createChrome } from './chrome.js';
-import { createRadioTicker } from './radio.js';
+import { createMyTeamDashboard } from './my-team.js';
+import { createRadioBroadcast, createRadioTicker } from './radio.js';
 import { CIRCUITS, circuitByID, DEFAULT_CIRCUIT_ID } from './circuits.js';
 import { createStandingsPanel } from './standings.js';
 import { createTrackRenderer } from './track.js';
@@ -42,16 +43,25 @@ const track = createTrackRenderer(
   sendFocus,
   storedCircuitID(),
 );
-const radio = createRadioTicker(
-  {
-    panel: document.getElementById('radio-column')!,
-    toggle: document.getElementById('radio-toggle') as HTMLButtonElement,
-    count: document.getElementById('radio-count')!,
-    container: document.getElementById('radio')!,
-    empty: document.getElementById('radio-empty')!,
-  },
-  sendFocus,
-);
+const myTeam = createMyTeamDashboard({
+  select: document.getElementById('my-team-select') as HTMLSelectElement,
+  summary: document.getElementById('my-team-summary')!,
+  cars: document.getElementById('my-team-cars')!,
+  empty: document.getElementById('my-team-empty')!,
+  onTeamChange: standings.setMyTeam,
+});
+const radio = createRadioBroadcast(document.getElementById('broadcast-radio')!);
+const localRadio = createRadioTicker({
+  panel: document.getElementById('radio-column')!,
+  toggle: document.getElementById('radio-toggle') as HTMLButtonElement,
+  count: document.getElementById('radio-count')!,
+  container: document.getElementById('radio')!,
+  empty: document.getElementById('radio-empty')!,
+}, sendFocus);
+const teamColumn = document.getElementById('team-column')!;
+const radioColumn = document.getElementById('radio-column')!;
+const standingsTitle = document.getElementById('standings-title')!;
+const standingsContainer = document.getElementById('standings')!;
 
 let sync: SyncMessage | null = null;
 
@@ -80,7 +90,11 @@ circuitSelect.addEventListener('change', () => {
  *  are anonymous and shared race state accepts no anonymous writes. Local mode
  *  syncs carry no circuitID and the selector stays a per-browser choice. */
 function followPinnedCircuit(circuitID: string | undefined): void {
-  if (circuitID === undefined) return;
+  if (circuitID === undefined) {
+    circuitSelect.disabled = false;
+    circuitSelect.title = '';
+    return;
+  }
   if (track.currentCircuitID() !== circuitID) {
     track.setCircuit(circuitID);
     circuitSelect.value = track.currentCircuitID();
@@ -103,10 +117,26 @@ function connect(): void {
   socket.onopen = () => sendCircuitLaps(circuitSelect.value);
   socket.onmessage = event => {
     sync = JSON.parse(event.data as string) as SyncMessage;
+    const multiplayer = sync.circuitID !== undefined;
+    document.documentElement.classList.toggle('is-multiplayer', multiplayer);
+    document.documentElement.classList.toggle('is-local', !multiplayer);
+    teamColumn.hidden = !multiplayer;
+    radioColumn.hidden = multiplayer;
+    standingsTitle.textContent = multiplayer ? 'STANDINGS' : 'CONSTRUCTORS';
+    standingsContainer.setAttribute(
+      'aria-label',
+      multiplayer ? 'Race standings' : 'Constructors standings',
+    );
     followPinnedCircuit(sync.circuitID);
     chrome.render(sync);
     standings.render(sync);
-    radio.render(sync);
+    if (multiplayer) {
+      myTeam.render(sync);
+      radio.render(sync);
+    } else {
+      radio.reset();
+      localRadio.render(sync);
+    }
     track.setSync(sync, performance.now());
   };
   socket.onclose = () => setTimeout(connect, 1000);

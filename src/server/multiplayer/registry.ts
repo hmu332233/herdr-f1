@@ -189,7 +189,9 @@ export function createParticipantRegistry(raceMode: RaceMode = 'classic') {
         factors.push({
           terminalID: `${participant.name}/car${index + 1}`,
           factor: raceMode === 'continuous'
-            ? (!live || state !== 'working' ? MultiplayerRules.cruisingFactor : 1 + 0.25 * uptime)
+            ? (!live || state !== 'working'
+                ? MultiplayerRules.cruisingFactor
+                : 1 + MultiplayerRules.continuousWorkingBonusSpan * uptime)
             : MultiplayerRules.uptimeFloor + MultiplayerRules.uptimeSpan * uptime,
         });
       });

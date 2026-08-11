@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createCrewTracker } from '../src/server/multiplayer/join.js';
 import { createVenueShuffleBag, randomVenue, startHost, type HostHandle } from '../src/server/multiplayer/host.js';
 import { createParticipantRegistry } from '../src/server/multiplayer/registry.js';
+import { MultiplayerRules } from '../src/server/rules.js';
 import { createUptimeTracker } from '../src/server/multiplayer/uptime.js';
 import {
   decodeHostMessage, decodeJoinMessage, emptyCounters, emptyCrewReport,
@@ -210,7 +211,16 @@ describe('participant registry', () => {
     expect(car.crewCounts).toEqual({ working: 0, idle: 0, done: 0, blocked: 2 });
     expect(car.isLastKnown).toBe(true);
     expect(car.status).toBe('idle');
-    expect(registry.paceFactors(1)[0].factor).toBe(0.75);
+    expect(registry.paceFactors(1)[0].factor).toBe(MultiplayerRules.cruisingFactor);
+  });
+
+  it('compresses continuous working uptime into a 1.0x to 1.02x band', () => {
+    const registry = createParticipantRegistry('continuous');
+    registry.connect('mark');
+    registry.update('mark', [crew(1, 1), crew(0, 0)], 0);
+    expect(registry.paceFactors(0)[0].factor).toBe(1);
+    expect(registry.paceFactors(45)[0].factor).toBeCloseTo(1.01, 8);
+    expect(registry.paceFactors(90)[0].factor).toBeCloseTo(1.02, 8);
   });
 
   it('fields one car for a one-agent participant', () => {
