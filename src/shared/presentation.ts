@@ -3,6 +3,10 @@ export type AgentStatus = 'idle' | 'working' | 'done' | 'blocked';
 
 export type RaceMode = 'classic' | 'continuous';
 
+/** Host-owned tyre-service phase. Classic/local entries use `none`; the
+ * continuous multiplayer host advances every other phase. */
+export type PitState = 'none' | 'racing' | 'pitIn' | 'pitting' | 'pitOut';
+
 /** Aggregate state of a multiplayer vehicle crew. */
 export type CrewState = AgentStatus | 'cruising';
 
@@ -93,11 +97,18 @@ export interface EntryPresentation {
   officialDistance: number;
   /** One-based lap derived from official distance, capped at the race distance. */
   lap: number;
-  /** `LAP n`, `PIT`, `DONE · LAP n`, `INCIDENT · LAP n`, `RETIRED · LAP n`, `NEXT GRID`. */
+  /** Current lap or lifecycle treatment, including continuous `PIT IN`,
+   * `PITTING`, and `PIT OUT`. */
   statusText: string;
   placement: EntryPlacement;
   /** Display motion in laps/second for client-side extrapolation between syncs. */
   displaySpeed: number;
+  /** Remaining tyre life as a percentage. Present only in continuous
+   * multiplayer races, where working laps consume it. */
+  tireLife: number | null;
+  pitState: PitState;
+  /** Seconds until the car returns to racing, including the current pit phase. */
+  pitTimeRemaining: number | null;
   isFocused: boolean;
   showsNewStint: boolean;
   /** This car is why the yellow flag is out, so it flashes with the track.

@@ -3,7 +3,7 @@ import { radioText } from './radio.js';
 import type { HerdrUpdate, SourceAgent, SourceSnapshot } from './herdr/types.js';
 import type {
   AgentStatus, ConnectionState, CrewCounts, CrewState, EntryPlacement, EntryPresentation,
-  FlagState, PodiumResult, RaceControlState, RaceMode, RaceOverlay, RacePhase,
+  FlagState, PitState, PodiumResult, RaceControlState, RaceMode, RaceOverlay, RacePhase,
   RacePresentation, RadioKind, RadioMessage, TeamColorToken, TeamStanding,
 } from '../shared/presentation.js';
 
@@ -31,6 +31,9 @@ interface Entry {
   /** Live speed factor injected from outside the seeded pace — the multiplayer
    *  host drives it from crew uptime (M4). 1 in local mode. */
   externalPace: number;
+  tireLife: number;
+  pitState: Exclude<PitState, 'none'>;
+  pitPhaseRemaining: number;
   isRetired: boolean;
   isQueuedNextGrid: boolean;
   /** A block that occurs while parked stays a pit-lane incident. */
@@ -197,7 +200,13 @@ export function createRaceSession(
 
   function scoreContinuous(elapsed: number): void {
     if (controlPhase === 'greenFlag' && raceTime >= greenFlagUntil) controlPhase = 'green';
+    advancePitCycles(elapsed);
     if (controlPhase === 'deployed' || controlPhase === 'inThisLap') {
+      safetyQueue = safetyQueue.filter(id => {
+        const entry = entries.get(id);
+        return entry !== undefined && isContinuousRunner(entry);
+      });
+      appendMissingQueueRunners();
       scoreSafetyCar(elapsed);
       return;
     }
@@ -208,18 +217,21 @@ export function createRaceSession(
     // Freeze the factors for this scoring step. The finish probe and commit
     // pass must use the same rubber-band correction, even if a pass would
     // change the order by the end of the step.
-    const factors = continuousGreenFactors();
+    const plan = continuousGreenPlan();
+    const factors = plan.factors;
     let earliestFinish = elapsed;
     let finisher: string | null = null;
-    for (const entry of entries.values()) {
-      if (!isContinuousRunner(entry)) continue;
+    for (const [index, entry] of plan.runners.entries()) {
       const official = { value: entry.official };
       const pace = { ...entry.pace };
       const unused = walk(
         official, pace, entry.terminalID, elapsed,
         factors.get(entry.terminalID) ?? continuousNormalFactor(entry),
       );
-      if (official.value >= totalLaps) {
+      // A pace-matched follower cannot finish through the car ahead. Only the
+      // current leader and cars with an explicit working pass may set the
+      // finish time in the independent probe.
+      if (official.value >= totalLaps && (index === 0 || plan.canPass.has(entry.terminalID))) {
         const finishTime = elapsed - unused;
         if (finishTime < earliestFinish || (finishTime === earliestFinish && finisher === null)) {
           earliestFinish = finishTime;
@@ -228,16 +240,26 @@ export function createRaceSession(
       }
     }
     const budget = finisher === null ? elapsed : earliestFinish;
-    for (const entry of entries.values()) {
-      if (!isContinuousRunner(entry)) continue;
+    let ahead: Entry | undefined;
+    for (const entry of plan.runners) {
+      const before = entry.official;
       const official = { value: entry.official };
       walk(
         official, entry.pace, entry.terminalID, budget,
         factors.get(entry.terminalID) ?? continuousNormalFactor(entry),
       );
+      const mayPass = plan.canPass.has(entry.terminalID);
+      if (ahead && !mayPass) {
+        const limit = ahead.official
+          - (plan.holdingGaps.get(entry.terminalID)
+            ?? MultiplayerRules.continuousCatchupTargetGap);
+        official.value = Math.min(official.value, Math.max(before, limit));
+      }
       entry.official = official.value;
       entry.display = official.value;
+      ahead = entry;
     }
+    wearContinuousTires(budget);
     if (finisher !== null) finishGrandPrix();
   }
 
@@ -302,32 +324,56 @@ export function createRaceSession(
   }
 
   function isContinuousRunner(entry: Entry): boolean {
-    return !entry.isRetired && !entry.isQueuedNextGrid && !isLiveBlocked(entry);
+    return !entry.isRetired
+      && !entry.isQueuedNextGrid
+      && !isLiveBlocked(entry)
+      && entry.pitState === 'racing';
   }
 
   function continuousNormalFactor(entry: Entry): number {
-    if (entry.isLastKnown || entry.crewState !== 'working') return MultiplayerRules.cruisingFactor;
-    return Math.min(
-      1 + MultiplayerRules.continuousWorkingBonusSpan,
-      Math.max(1, entry.externalPace),
-    );
+    const stateFactor = entry.isLastKnown || entry.crewState !== 'working'
+      ? MultiplayerRules.cruisingFactor
+      : Math.min(
+          1 + MultiplayerRules.continuousWorkingBonusSpan,
+          Math.max(1, entry.externalPace),
+        );
+    return stateFactor - continuousTirePenalty(entry);
   }
 
-  /** Individual-car green-flag pace. A position-only boost would make two
-   *  side-by-side cars swap a large bonus on every pass, so rank determines
-   *  eligibility while the actual leader gap fades the correction in. */
-  function continuousGreenFactors(): Map<string, number> {
+  function continuousTirePenalty(entry: Entry): number {
+    const wornRange = MultiplayerRules.tireWearStartsAt
+      - MultiplayerRules.tireLifePitThreshold;
+    const worn = MultiplayerRules.tireWearStartsAt - entry.tireLife;
+    return MultiplayerRules.tirePenaltyMax * Math.min(1, Math.max(0, worn / wornRange));
+  }
+
+  /** Individual-car green-flag pace. Catch-up is available to every follower,
+   *  including a cruising car behind a working leader. It closes the field but
+   *  cannot create an overtake: inside the target gap the follower matches the
+   *  actual pace of the car ahead. A live WORKING car is the sole exception:
+   *  natural pace can pass another car, with an extra burst against a
+   *  non-working or offline car inside the passing range. */
+  function continuousGreenPlan(): {
+    runners: Entry[];
+    factors: Map<string, number>;
+    canPass: Set<string>;
+    holdingGaps: Map<string, number>;
+  } {
     const runners = [...entries.values()]
       .filter(isContinuousRunner)
       .sort((a, b) => b.official - a.official || compareOrderKeys(orderKey(a), orderKey(b)));
     const factors = new Map<string, number>();
-    const leaderDistance = runners[0]?.official ?? 0;
-    const lastIndex = runners.length - 1;
+    const actualFactors = new Map<string, number>();
+    const naturalFactors = new Map<string, number>();
+    const canPass = new Set<string>();
+    const holdingGaps = new Map<string, number>();
+    const leaderPace = runners[0] ? currentPaceMultiplier(runners[0]) : 1;
+    const leaderActual = runners[0]
+      ? leaderPace * continuousNormalFactor(runners[0])
+      : 0;
     runners.forEach((entry, index) => {
-      const rankShare = lastIndex <= 0 ? 0 : index / lastIndex;
-      const leaderGap = Math.max(0, leaderDistance - entry.official);
-      const gapShare = Math.min(1, leaderGap / MultiplayerRules.continuousCatchupFullGap);
-      const catchup = MultiplayerRules.continuousCatchupMax * rankShare * gapShare;
+      const pace = currentPaceMultiplier(entry);
+      const naturalActual = pace * continuousNormalFactor(entry);
       const ahead = index > 0 ? runners[index - 1] : undefined;
       const gapToAhead = ahead ? Math.max(0, ahead.official - entry.official) : Infinity;
       const canPassCruiser = entry.crewState === 'working'
@@ -335,10 +381,114 @@ export function createRaceSession(
         && ahead !== undefined
         && (ahead.crewState !== 'working' || ahead.isLastKnown)
         && gapToAhead <= MultiplayerRules.continuousOvertakeRange;
-      const overtake = canPassCruiser ? MultiplayerRules.continuousOvertakeBoost : 0;
-      factors.set(entry.terminalID, continuousNormalFactor(entry) + catchup + overtake);
+      let actual = naturalActual;
+      if (ahead) {
+        const aheadActual = actualFactors.get(ahead.terminalID) ?? leaderActual;
+        const aheadNatural = naturalFactors.get(ahead.terminalID) ?? aheadActual;
+        const workingPass = entry.crewState === 'working'
+          && !entry.isLastKnown
+          && gapToAhead <= MultiplayerRules.continuousOvertakeRange
+          && (canPassCruiser || naturalActual > aheadNatural + 1e-9);
+        if (!workingPass && gapToAhead <= MultiplayerRules.continuousCatchupTargetGap) {
+          actual = aheadActual;
+          // Cars may join or start at the same coordinate. Hold the intended
+          // spacing rather than preserving that overlap forever; the commit
+          // cap lets the car ahead open the gap without moving anyone back.
+          holdingGaps.set(entry.terminalID, MultiplayerRules.continuousCatchupTargetGap);
+        } else {
+          const catchupRange = MultiplayerRules.continuousCatchupFullGap
+            - MultiplayerRules.continuousCatchupTargetGap;
+          const gapShare = Math.min(
+            1,
+            Math.max(
+              0,
+              (gapToAhead - MultiplayerRules.continuousCatchupTargetGap) / catchupRange,
+            ),
+          );
+          const catchup = MultiplayerRules.continuousCatchupMin
+            + (MultiplayerRules.continuousCatchupMax - MultiplayerRules.continuousCatchupMin)
+              * gapShare;
+          // Cap every follower against the leader rather than compounding
+          // +0.04x down a long train. A tail car closes after the car ahead
+          // joins the train, producing a stable accordion instead of runaway.
+          actual = Math.max(
+            actual,
+            Math.min(aheadActual + catchup, leaderActual + MultiplayerRules.continuousCatchupMax),
+          );
+          if (workingPass) {
+            if (canPassCruiser) actual += MultiplayerRules.continuousOvertakeBoost;
+            canPass.add(entry.terminalID);
+          } else {
+            holdingGaps.set(
+              entry.terminalID,
+              MultiplayerRules.continuousCatchupTargetGap,
+            );
+          }
+        }
+      }
+      naturalFactors.set(entry.terminalID, naturalActual);
+      actualFactors.set(entry.terminalID, actual);
+      factors.set(entry.terminalID, actual / pace);
     });
-    return factors;
+    return { runners, factors, canPass, holdingGaps };
+  }
+
+  function currentPaceMultiplier(entry: Entry): number {
+    return entry.pace.lap === -1 ? 1 : entry.pace.multiplier;
+  }
+
+  function advancePitCycles(elapsed: number): void {
+    for (const entry of entries.values()) {
+      if (entry.pitState === 'racing') continue;
+      let remaining = elapsed;
+      while (remaining > 1e-12 && entry.pitState !== 'racing') {
+        const used = Math.min(remaining, entry.pitPhaseRemaining);
+        entry.pitPhaseRemaining -= used;
+        remaining -= used;
+        if (entry.pitPhaseRemaining > 1e-12) break;
+        if (entry.pitState === 'pitIn') {
+          entry.pitState = 'pitting';
+          entry.pitPhaseRemaining = MultiplayerRules.pitServiceSeconds;
+        } else if (entry.pitState === 'pitting') {
+          entry.tireLife = MultiplayerRules.tireLifeFresh;
+          entry.pitState = 'pitOut';
+          entry.pitPhaseRemaining = MultiplayerRules.pitExitSeconds;
+        } else {
+          entry.pitState = 'racing';
+          entry.pitPhaseRemaining = 0;
+        }
+      }
+    }
+  }
+
+  function wearContinuousTires(elapsed: number): void {
+    const wearPerSecond = (
+      MultiplayerRules.tireLifeFresh - MultiplayerRules.tireLifePitThreshold
+    ) / MultiplayerRules.tireWorkingSecondsToPit;
+    for (const entry of entries.values()) {
+      if (!isContinuousRunner(entry)) continue;
+      if (entry.crewState !== 'working' || entry.isLastKnown) continue;
+      entry.tireLife = Math.max(
+        MultiplayerRules.tireLifePitThreshold,
+        entry.tireLife - elapsed * wearPerSecond,
+      );
+      if (entry.tireLife > MultiplayerRules.tireLifePitThreshold + 1e-9) continue;
+      entry.pitState = 'pitIn';
+      entry.pitPhaseRemaining = MultiplayerRules.pitEntrySeconds;
+    }
+  }
+
+  function pitTimeRemaining(entry: Entry): number | null {
+    switch (entry.pitState) {
+      case 'racing': return null;
+      case 'pitIn':
+        return entry.pitPhaseRemaining
+          + MultiplayerRules.pitServiceSeconds
+          + MultiplayerRules.pitExitSeconds;
+      case 'pitting':
+        return entry.pitPhaseRemaining + MultiplayerRules.pitExitSeconds;
+      case 'pitOut': return entry.pitPhaseRemaining;
+    }
   }
 
   function isDriving(entry: Entry): boolean {
@@ -490,6 +640,9 @@ export function createRaceSession(
       entry.official = 0;
       entry.display = 0;
       entry.pace = { multiplier: 1, lap: -1 };
+      entry.tireLife = MultiplayerRules.tireLifeFresh;
+      entry.pitState = 'racing';
+      entry.pitPhaseRemaining = 0;
       entry.isQueuedNextGrid = false;
       entry.newStintUntil = null;
       entry.incidentInPit = false;
@@ -654,6 +807,9 @@ export function createRaceSession(
       display: 0,
       pace: { multiplier: 1, lap: -1 },
       externalPace: 1,
+      tireLife: MultiplayerRules.tireLifeFresh,
+      pitState: 'racing',
+      pitPhaseRemaining: 0,
       isRetired: false,
       isQueuedNextGrid: false,
       incidentInPit: false,
@@ -833,7 +989,9 @@ export function createRaceSession(
     // One condition for the whole presentation: every entry reports the display
     // speed it is actually being scored at.
     const paceFactor = fieldPaceFactor();
-    const continuousFactors = raceMode === 'continuous' ? continuousGreenFactors() : undefined;
+    const continuousFactors = raceMode === 'continuous'
+      ? continuousGreenPlan().factors
+      : undefined;
     // A workspace whose every entry has retired leaves the standings (and the
     // podium) entirely. The entries themselves stay in the session, so a
     // terminal reappearing before race end restores the team with its
@@ -905,6 +1063,12 @@ export function createRaceSession(
       if (isLiveBlocked(entry)) {
         placement = { kind: 'incidentTrack', progress };
         statusText = `INCIDENT · LAP ${lap}`;
+      } else if (entry.pitState === 'pitIn' || entry.pitState === 'pitting') {
+        placement = { kind: 'pit' };
+        statusText = entry.pitState === 'pitIn' ? 'PIT IN' : 'PITTING';
+      } else if (entry.pitState === 'pitOut') {
+        placement = { kind: 'track', progress };
+        statusText = 'PIT OUT';
       } else {
         placement = { kind: 'track', progress };
         statusText = `LAP ${lap}`;
@@ -947,6 +1111,9 @@ export function createRaceSession(
       statusText,
       placement,
       displaySpeed: displaySpeed(entry, paceFactor, continuousFactors),
+      tireLife: raceMode === 'continuous' ? entry.tireLife : null,
+      pitState: raceMode === 'continuous' ? entry.pitState : 'none',
+      pitTimeRemaining: raceMode === 'continuous' ? pitTimeRemaining(entry) : null,
       isFocused: entry.isFocused,
       showsNewStint: entry.newStintUntil !== null && raceTime < entry.newStintUntil,
       causesYellowFlag: causesYellowFlag(entry),

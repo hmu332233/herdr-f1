@@ -87,6 +87,9 @@ npx herdr-f1 stop [--socket <path>]
 실행합니다. 기본값인 `classic`은 **기존 레이스**, `continuous`는 **상시 레이스**입니다.
 상시 레이스에서는 idle, done, 혼합 상태, 오프라인 팀도 순항 페이스로 계속 달립니다.
 blocked crew는 멈추고 실제로 대열을 형성하는 Safety Car를 발동합니다.
+모든 차량이 선두권까지 간격을 좁힐 수 있지만 트랙 추월은 working 차량만 가능합니다.
+working 중에는 대시보드에 표시되는 타이어 수명이 줄어들며, 타이어가 닳으면 의무
+피트스톱으로 실제 순위가 바뀔 수 있습니다.
 
 ```sh
 npx herdr-f1 host --race-mode classic

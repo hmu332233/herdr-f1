@@ -670,9 +670,12 @@ export function createTrackRenderer(
     if (entry.placement.kind === 'nextGrid') {
       ctx.fillStyle = palette.textMuted;
       ctx.fillText('NEXT GRID', 0, radius() + 6);
-    } else if (entry.status === 'idle' && entry.placement.kind === 'pit') {
+    } else if (
+      (entry.status === 'idle' && entry.placement.kind === 'pit') ||
+      (entry.pitState !== 'none' && entry.pitState !== 'racing')
+    ) {
       ctx.fillStyle = palette.statusPit;
-      ctx.fillText('PIT', 0, radius() + 6);
+      ctx.fillText(entry.pitState === 'pitting' ? 'PITTING' : 'PIT', 0, radius() + 6);
     }
     if (entry.showsNewStint) {
       ctx.fillStyle = '#FFFFFF';

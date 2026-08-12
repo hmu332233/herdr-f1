@@ -91,8 +91,10 @@ export function createMyTeamDashboard(elements: MyTeamElements) {
         (byID.get(b.id)?.rank ?? Number.MAX_SAFE_INTEGER) ||
       a.carNumber - b.carNumber);
     cars.replaceChildren(
-      createTimingHeader(),
-      ...entries.map(entry => createMyCar(team, entry, byID.get(entry.id))),
+      createTimingHeader(sync.raceMode === 'continuous'),
+      ...entries.map(entry => createMyCar(
+        team, entry, byID.get(entry.id), sync.raceMode === 'continuous',
+      )),
     );
   }
 
@@ -105,11 +107,15 @@ export function createMyTeamDashboard(elements: MyTeamElements) {
   return { render };
 }
 
-function createTimingHeader(): HTMLElement {
+function createTimingHeader(showsTires: boolean): HTMLElement {
   const header = document.createElement('div');
   header.className = 'my-team-table-header my-team-grid';
+  header.classList.toggle('has-tires', showsTires);
   header.setAttribute('role', 'presentation');
-  for (const label of ['', 'CAR', 'POS', 'SESSION', 'STATUS', 'GAP', 'PACE', 'STINT', 'CREW']) {
+  const labels = ['', 'CAR', 'POS', 'SESSION', 'STATUS', 'GAP', 'PACE'];
+  if (showsTires) labels.push('TYRE');
+  labels.push('STINT', 'CREW');
+  for (const label of labels) {
     const cell = document.createElement('span');
     cell.textContent = label;
     header.append(cell);
@@ -121,10 +127,12 @@ function createMyCar(
   team: TeamStanding,
   entry: EntryPresentation,
   ranked: RankedVehicle | undefined,
+  showsTires: boolean,
 ): HTMLElement {
   const color = teamColor(team.colorToken, true);
   const row = document.createElement('article');
   row.className = 'my-car my-team-grid';
+  row.classList.toggle('has-tires', showsTires);
   row.setAttribute('role', 'listitem');
   row.style.setProperty('--team-color', color);
   row.classList.toggle('is-working', entry.crewState === 'working');
@@ -167,6 +175,12 @@ function createMyCar(
   stint.className = 'my-car-stint mono';
   stint.textContent = entry.statusText;
 
+  const tire = document.createElement('span');
+  tire.className = 'my-car-tire mono';
+  const tireLife = entry.tireLife ?? 0;
+  tire.dataset.level = tireLife <= 20 ? 'critical' : tireLife <= 50 ? 'worn' : 'fresh';
+  tire.textContent = entry.tireLife === null ? '—' : `${Math.round(tireLife)}%`;
+
   const counts = document.createElement('span');
   counts.className = 'my-car-counts mono';
   counts.textContent =
@@ -177,11 +191,14 @@ function createMyCar(
   freshness.className = 'my-car-freshness';
   freshness.textContent = entry.isLastKnown ? 'LAST KNOWN' : '';
 
-  row.append(marker, carNumber, position, session, state, gap, pace, stint, counts, freshness);
+  row.append(marker, carNumber, position, session, state, gap, pace);
+  if (showsTires) row.append(tire);
+  row.append(stint, counts, freshness);
   row.setAttribute(
     'aria-label',
     `${team.label}, ${entry.tabLabel}, ${ranked ? `position ${ranked.rank}` : 'unranked'}, ` +
-      `${entry.crewState}, ${ranked?.gapText ?? ''}`,
+      `${entry.crewState}, ${showsTires ? `tyre ${Math.round(tireLife)} percent, ` : ''}` +
+      `${ranked?.gapText ?? ''}`,
   );
   return row;
 }

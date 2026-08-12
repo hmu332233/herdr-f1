@@ -35,17 +35,22 @@ function continuous(...cars: ReturnType<typeof car>[]) {
 }
 
 describe('continuous vehicle pace', () => {
-  it('scores idle, done, and mixed crews at the compressed cruising pace', () => {
+  it('scores cruising cars while separating an initially overlapping grid', () => {
     const session = continuous(
       car('idle', 'idle', counts(0, 2, 0, 0)),
       car('done', 'done', counts(0, 0, 2, 0)),
       car('mixed', 'cruising', counts(0, 1, 1, 0)),
     );
     tickTo(session, 0, RaceRules.baseLapDuration);
-    for (const id of ['idle', 'done', 'mixed']) {
-      const entry = entryById(session.presentation(), id);
-      expect(entry.officialDistance).toBeCloseTo(MultiplayerRules.cruisingFactor, 8);
+    const entries = session.presentation().teams.flatMap(team => team.entries);
+    expect(entries[0].officialDistance).toBeCloseTo(MultiplayerRules.cruisingFactor, 8);
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
       expect(entry.placement.kind).toBe('track');
+      if (index > 0) {
+        expect(entries[index - 1].officialDistance - entry.officialDistance)
+          .toBeCloseTo(MultiplayerRules.continuousCatchupTargetGap, 8);
+      }
     }
   });
 
@@ -71,7 +76,7 @@ describe('continuous vehicle pace', () => {
     expect(presentation.raceControl).toEqual({ kind: 'green' });
   });
 
-  it('smoothly boosts a lower-ranked car according to rank and leader gap', () => {
+  it('smoothly boosts a lower-ranked car according to the gap ahead', () => {
     const session = continuous(car('leader', 'working', counts(1, 0, 0, 0)));
     tickTo(session, 0, 9);
     session.applySnapshot(snap(team('alpha', 'alpha', [
@@ -91,6 +96,29 @@ describe('continuous vehicle pace', () => {
     const finalGap = entryById(after, 'leader').officialDistance
       - entryById(after, 'follower').officialDistance;
     expect(finalGap).toBeLessThan(initialGap);
+  });
+
+  it('lets a cruising follower close on a working leader but not pass it', () => {
+    const session = continuous(car('leader', 'working', counts(1, 0, 0, 0)));
+    tickTo(session, 0, 9);
+    session.applySnapshot(snap(team('alpha', 'alpha', [
+      car('leader', 'working', counts(1, 0, 0, 0)),
+      car('follower', 'idle', counts(0, 1, 0, 0)),
+    ])), 9);
+
+    const initial = session.presentation();
+    const initialGap = entryById(initial, 'leader').officialDistance
+      - entryById(initial, 'follower').officialDistance;
+    expect(entryById(initial, 'follower').displaySpeed)
+      .toBeGreaterThan(entryById(initial, 'leader').displaySpeed);
+
+    tickTo(session, 9, 300, 0.25);
+    const after = session.presentation();
+    const finalGap = entryById(after, 'leader').officialDistance
+      - entryById(after, 'follower').officialDistance;
+    expect(finalGap).toBeGreaterThanOrEqual(-1e-9);
+    expect(finalGap).toBeLessThan(initialGap);
+    expect(finalGap).toBeLessThanOrEqual(MultiplayerRules.continuousCatchupTargetGap + 1e-6);
   });
 
   it('gives a working car a short boost to pass a nearby cruising car', () => {
@@ -123,6 +151,61 @@ describe('continuous vehicle pace', () => {
     expect(entryById(after, 'worker').officialDistance)
       .toBeGreaterThan(entryById(after, 'cruiser').officialDistance);
   });
+
+  it('wears tyres only while working and completes a mandatory pit stop', () => {
+    const session = continuous(car('worker', 'working', counts(1, 0, 0, 0)));
+    tickTo(session, 0, MultiplayerRules.tireWorkingSecondsToPit, 0.25);
+    let entry = entryById(session.presentation(), 'worker');
+    expect(entry.tireLife).toBeCloseTo(MultiplayerRules.tireLifePitThreshold, 6);
+    expect(entry.pitState).toBe('pitIn');
+    expect(entry.placement.kind).toBe('pit');
+    expect(entry.displaySpeed).toBe(0);
+
+    let now = MultiplayerRules.tireWorkingSecondsToPit;
+    now = tickTo(session, now, now + MultiplayerRules.pitEntrySeconds, 0.1);
+    expect(entryById(session.presentation(), 'worker').pitState).toBe('pitting');
+    now = tickTo(session, now, now + MultiplayerRules.pitServiceSeconds, 0.1);
+    entry = entryById(session.presentation(), 'worker');
+    expect(entry.pitState).toBe('pitOut');
+    expect(entry.tireLife).toBeCloseTo(MultiplayerRules.tireLifeFresh, 6);
+    now = tickTo(session, now, now + MultiplayerRules.pitExitSeconds, 0.1);
+    entry = entryById(session.presentation(), 'worker');
+    expect(entry.pitState).toBe('racing');
+    expect(entry.tireLife).toBeGreaterThan(99);
+  });
+
+  it('does not consume tyre life while cruising', () => {
+    const session = continuous(car('cruiser', 'idle', counts(0, 1, 0, 0)));
+    tickTo(session, 0, 180);
+    const entry = entryById(session.presentation(), 'cruiser');
+    expect(entry.tireLife).toBe(MultiplayerRules.tireLifeFresh);
+    expect(entry.pitState).toBe('racing');
+  });
+
+  it('preserves existing tyre wear when a working car starts cruising', () => {
+    const session = continuous(car('car', 'working', counts(1, 0, 0, 0)));
+    let now = tickTo(session, 0, 90);
+    const worn = entryById(session.presentation(), 'car').tireLife!;
+    session.applySnapshot(snap(team('alpha', 'alpha', [
+      car('car', 'idle', counts(0, 1, 0, 0)),
+    ])), now);
+    now = tickTo(session, now, now + 90);
+    expect(entryById(session.presentation(), 'car').tireLife).toBeCloseTo(worn, 8);
+  });
+
+  it('loses track position during the mandatory stop', () => {
+    const session = continuous(
+      car('leader', 'working', counts(1, 0, 0, 0)),
+      car('follower', 'idle', counts(0, 1, 0, 0)),
+    );
+    tickTo(session, 0, MultiplayerRules.tireWorkingSecondsToPit, 0.25);
+    expect(entryById(session.presentation(), 'leader').pitState).toBe('pitIn');
+    tickTo(session, MultiplayerRules.tireWorkingSecondsToPit,
+      MultiplayerRules.tireWorkingSecondsToPit + 2, 0.25);
+    const after = session.presentation();
+    expect(entryById(after, 'follower').officialDistance)
+      .toBeGreaterThan(entryById(after, 'leader').officialDistance);
+  });
 });
 
 describe('continuous Safety Car', () => {
@@ -140,8 +223,6 @@ describe('continuous Safety Car', () => {
     ])), 36);
 
     const before = session.presentation();
-    const initialGap = entryById(before, 'leader').officialDistance
-      - entryById(before, 'follower').officialDistance;
     tickTo(session, 36, 54);
     const after = session.presentation();
     const finalGap = entryById(after, 'leader').officialDistance
@@ -151,7 +232,7 @@ describe('continuous Safety Car', () => {
       8,
     );
     expect(finalGap).toBeGreaterThanOrEqual(MultiplayerRules.safetyCarQueueGap - 1e-9);
-    expect(finalGap).toBeLessThan(initialGap);
+    expect(finalGap).toBeCloseTo(MultiplayerRules.safetyCarQueueGap, 8);
     expect(after.raceControl).toMatchObject({ kind: 'safetyCar', phase: 'deployed' });
   });
 

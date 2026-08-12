@@ -34,12 +34,25 @@ Vehicle pace is part of official scoring, not a display-only animation:
 - `WORKING` changes immediately to `1.0x` nominal pace.
 - Sustained working retains multiplayer's rolling 90-second uptime incentive and increases pace up to `1.02x`.
 - Per-lap random variation is reduced to `±0.5%`, so flavour does not obscure state and uptime.
-- Green-flag running gives lower-ranked individual cars a smooth catch-up correction of up to `+0.04x`. Rank determines eligibility, while the correction fades in with the actual gap to the leader and reaches its maximum at half a lap behind.
-- A `WORKING` car within `0.08` laps behind an `IDLE`, `DONE`, `CRUISING`, or offline car receives a temporary `+0.04x` passing boost. The boost disappears immediately after the pass or if the car ahead starts working.
+- Green-flag running gives every following car a gap-controlled catch-up correction from `+0.01x` to `+0.04x`, including a cruising car behind a working leader. The correction reaches its maximum half a lap behind and never compounds beyond `+0.04x` down a long train.
+- Catch-up stops at 80% of a vehicle-marker length, allowing at most 20% visual overlap. A car without passing permission matches the actual speed of the car ahead there, and the authoritative position step prevents the correction from creating an overtake. Cars that begin at the same coordinate first fan out to this spacing instead of preserving the overlap.
+- Only `WORKING` cars may overtake on track. Natural working pace may pass another car; within `0.08` laps of an `IDLE`, `DONE`, `CRUISING`, or offline car, working also receives a temporary `+0.04x` passing burst.
 - `BLOCKED` runs at `0x` and stops on the circuit.
 - All visible movement advances official distance and therefore affects laps, gaps, position, and the finish.
 
 One blocked agent stops its whole crew vehicle even if another crew member is working. Urgent state must not be averaged away.
+
+### Tyres and mandatory stops
+
+Tyres are authoritative continuous-multiplayer state, not a local animation:
+
+- Every car starts a Grand Prix with `100%` tyre life.
+- Tyre life falls only during green-flag `WORKING` running. Cruising, offline, blocked, Safety Car, and pit time do not consume it.
+- Performance begins to fade below `50%`, reaching a maximum `-0.02x` correction at the mandatory-stop threshold of `20%`.
+- At `20%` the host automatically sends the car through `PIT IN`, `PITTING`, and `PIT OUT`. Official distance is frozen through the stop, so circulating cars may take the position.
+- Service takes four seconds between the pit-entry and pit-exit transitions, then restores tyre life to `100%`.
+- The public vehicle card and the viewer's MY TEAM timing row show tyre percentage and pit phase. Colour reinforces fresh, worn, and critical states but never replaces the numeric label.
+- Tyre state resets for the next Grand Prix. Classic multiplayer and local racing remain unchanged.
 
 ### Disconnected and offline teams
 
@@ -84,6 +97,7 @@ Cards are the authoritative status display and must remain readable without inte
 - Each vehicle row shows the priority badge defined above.
 - A segmented bar shows the proportion of `working`, `idle`, `done`, and `blocked` agents in the crew.
 - Text counts such as `W2 · I1 · D1 · B0` accompany the bar.
+- Continuous-race rows show an exact tyre-life percentage, a compact wear bar, and `PIT IN`, `PITTING`, or `PIT OUT` when applicable.
 - A blocked vehicle keeps the existing yellow flashing row treatment.
 - A team with any blocked vehicle also receives a flashing yellow card border and a header summary such as `1 BLOCKED`.
 - Normal working, idle, and done states do not recolour or animate the whole team card; team livery remains stable and urgent treatments remain exceptional.
@@ -112,6 +126,7 @@ The multiplayer wire report must carry current idle and done counts in addition 
 
 - Continuous mode needs explicit race-control phases for Safety Car deployment, withdrawal, and the transient green flag.
 - Queue order and gap control become authoritative simulation state and require deterministic tests, including wrap-around, lapped cars, recovery, new entrants, and a new block during withdrawal.
+- Tyre life and pit phases are host-owned simulation state. A continuously working car remains faster on average than a `0.98x` cruiser after its mandatory-stop losses, but the stop creates real opportunities for the order to cycle.
 - Host and join clients must upgrade together when the crew report gains idle and done counts.
 - A cruising or offline team can still finish a race. Sustained working has a small intrinsic advantage, while the catch-up correction keeps the field close without changing Safety Car order.
 - Classic-mode behaviour must be covered by regression tests so adding continuous mode cannot silently change the default.

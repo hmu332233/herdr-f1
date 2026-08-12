@@ -89,7 +89,9 @@ already in use, Herdr F1 automatically finds the next available port.
 Start a host, then have each team run the printed `join` command on a machine
 with Herdr. `classic` remains the default. `continuous` keeps idle, completed,
 mixed-state, and offline teams circulating at cruising pace; blocked crews stop
-and deploy a queue-forming Safety Car.
+and deploy a queue-forming Safety Car. Every car may close the field, but only a
+working car may overtake on track. Working also consumes visible tyre life;
+worn cars make a mandatory stop that can change the order.
 
 ```sh
 npx herdr-f1 host --race-mode classic

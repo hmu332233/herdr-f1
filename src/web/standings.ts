@@ -207,7 +207,19 @@ function createVehicleCard(
   const counts = document.createElement('span');
   counts.className = 'crew-counts mono';
   crewDetail.append(counts);
-  body.append(identity, meta, crewDetail);
+  const tireDetail = document.createElement('span');
+  tireDetail.className = 'vehicle-tire';
+  const tireLabel = document.createElement('span');
+  tireLabel.className = 'vehicle-tire-label mono';
+  const tireTrack = document.createElement('span');
+  tireTrack.className = 'vehicle-tire-track';
+  const tireFill = document.createElement('span');
+  tireFill.className = 'vehicle-tire-fill';
+  tireTrack.append(tireFill);
+  const pitStatus = document.createElement('span');
+  pitStatus.className = 'vehicle-pit-status mono';
+  tireDetail.append(tireLabel, tireTrack, pitStatus);
+  body.append(identity, meta, crewDetail, tireDetail);
 
   const telemetry = document.createElement('span');
   telemetry.className = 'vehicle-telemetry mono';
@@ -244,20 +256,39 @@ function createVehicleCard(
     alert.textContent = entry.isLastKnown ? 'LAST KNOWN' : '';
     onboard.hidden = !entry.isFocused;
     crewDetail.hidden = mode !== 'continuous';
+    tireDetail.hidden = mode !== 'continuous' || entry.tireLife === null;
     counts.textContent =
       `W${entry.crewCounts.working} · I${entry.crewCounts.idle} · ` +
       `D${entry.crewCounts.done} · B${entry.crewCounts.blocked}`;
+    const tireLife = entry.tireLife ?? 0;
+    tireLabel.textContent = `TYRE ${Math.round(tireLife)}%`;
+    tireFill.style.width = `${Math.max(0, Math.min(100, tireLife))}%`;
+    tireDetail.dataset.level = tireLife <= 20 ? 'critical' : tireLife <= 50 ? 'worn' : 'fresh';
+    pitStatus.textContent = formatPitState(entry);
     gap.textContent = next.gapText;
     distance.textContent = `${entry.officialDistance.toFixed(2)} LAPS`;
     action.setAttribute(
       'aria-label',
       `Position ${next.rank}, car ${entry.carNumber}, ${team.label}, ${entry.tabLabel}, ` +
-        `${entry.statusText.toLowerCase()}, ${next.gapText.toLowerCase()}, focus in Herdr`,
+        `${entry.statusText.toLowerCase()}, tyre ${Math.round(tireLife)} percent, ` +
+        `${next.gapText.toLowerCase()}, focus in Herdr`,
     );
   }
 
   update(vehicle, raceMode);
   return { element, update };
+}
+
+function formatPitState(entry: EntryPresentation): string {
+  switch (entry.pitState) {
+    case 'pitIn': return 'PIT IN';
+    case 'pitting': return entry.pitTimeRemaining === null
+      ? 'PITTING'
+      : `PITTING ${entry.pitTimeRemaining.toFixed(1)}s`;
+    case 'pitOut': return 'PIT OUT';
+    case 'racing': return entry.tireLife !== null && entry.tireLife <= 20 ? 'PIT REQUIRED' : '';
+    case 'none': return '';
+  }
 }
 
 /** Personal-mode constructor standings, kept identical to the original local dashboard. */

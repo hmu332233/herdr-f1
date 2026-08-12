@@ -16,6 +16,9 @@ describe('RaceSession scoring', () => {
     expect(entry.lap).toBe(2);
     expect(entry.statusText).toBe('LAP 2');
     expect(entry.placement.kind).toBe('track');
+    expect(entry.tireLife).toBeNull();
+    expect(entry.pitState).toBe('none');
+    expect(entry.pitTimeRemaining).toBeNull();
     expect(session.presentation().headerLap).toBe(2);
   });
 

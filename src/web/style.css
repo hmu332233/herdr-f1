@@ -500,6 +500,33 @@ html.is-multiplayer #standings { display: flex; flex-direction: column; align-it
 .vehicle-gap { font-size: 10px; font-weight: 850; color: #fff; }
 .vehicle-distance { font-size: 8px; font-weight: 650; color: var(--text-muted); }
 .vehicle-card .crew-detail { grid-column: auto; }
+.vehicle-tire {
+  display: grid;
+  grid-template-columns: auto minmax(42px, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.vehicle-tire-label, .vehicle-pit-status {
+  color: var(--text-muted);
+  font-size: 7.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.vehicle-tire-track {
+  height: 3px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.12);
+  border-radius: 2px;
+}
+.vehicle-tire-fill { display: block; height: 100%; background: #fff; border-radius: inherit; }
+.vehicle-tire[data-level='worn'] .vehicle-tire-fill,
+.vehicle-tire[data-level='worn'] .vehicle-tire-label { color: var(--flag-yellow); }
+.vehicle-tire[data-level='worn'] .vehicle-tire-fill { background: var(--flag-yellow); }
+.vehicle-tire[data-level='critical'] .vehicle-tire-fill,
+.vehicle-tire[data-level='critical'] .vehicle-tire-label,
+.vehicle-tire[data-level='critical'] .vehicle-pit-status { color: var(--live-red); }
+.vehicle-tire[data-level='critical'] .vehicle-tire-fill { background: var(--live-red); }
 
 /* MY TEAM: a browser-local garage view. The selector identifies this viewer's
    participant without changing host-owned multiplayer state. */
@@ -543,6 +570,10 @@ html.is-multiplayer #standings { display: flex; flex-direction: column; align-it
   column-gap: 14px;
   min-width: 940px;
   justify-content: start;
+}
+.my-team-grid.has-tires {
+  grid-template-columns: 3px 42px 48px 190px 88px 112px 64px 72px 100px 180px;
+  min-width: 1026px;
 }
 .my-team-table-header {
   flex: 0 0 23px;
@@ -589,13 +620,15 @@ html.is-multiplayer #standings { display: flex; flex-direction: column; align-it
   text-overflow: ellipsis;
 }
 .my-car-gap { color: #fff; font-size: 10px; font-weight: 800; white-space: nowrap; }
-.my-car-pace, .my-car-stint, .my-car-counts {
+.my-car-pace, .my-car-tire, .my-car-stint, .my-car-counts {
   color: var(--text-muted);
   font-size: 9px;
   font-weight: 700;
   white-space: nowrap;
 }
 .my-car-counts { letter-spacing: 0.35px; }
+.my-car-tire[data-level='worn'] { color: var(--flag-yellow); }
+.my-car-tire[data-level='critical'] { color: var(--live-red); }
 .my-car-freshness { position: absolute; right: 6px; top: 3px; color: var(--text-soft); font-size: 6px; font-weight: 800; letter-spacing: 0.6px; }
 
 /* Public TV-style radio graphic over the race feed. It is deliberately
