@@ -347,12 +347,12 @@ export function createRaceSession(
     return MultiplayerRules.tirePenaltyMax * Math.min(1, Math.max(0, worn / wornRange));
   }
 
-  /** Individual-car green-flag pace. Catch-up is available to every follower,
-   *  including a cruising car behind a working leader. It closes the field but
-   *  cannot create an overtake: inside the target gap the follower matches the
-   *  actual pace of the car ahead. A live WORKING car is the sole exception:
-   *  natural pace can pass another car, with an extra burst against a
-   *  non-working or offline car inside the passing range. */
+  /** Individual-car green-flag pace. A distant follower receives a recovery
+   *  boost on top of its own natural pace; nearby cars run naturally, so the
+   *  field does not converge into an evenly spaced train. The assist cannot
+   *  create an overtake. A live WORKING car is the sole exception: natural
+   *  pace can pass another car, with an extra burst against a non-working or
+   *  offline car inside the passing range. */
   function continuousGreenPlan(): {
     runners: Entry[];
     factors: Map<string, number>;
@@ -397,23 +397,25 @@ export function createRaceSession(
           holdingGaps.set(entry.terminalID, MultiplayerRules.continuousCatchupTargetGap);
         } else {
           const catchupRange = MultiplayerRules.continuousCatchupFullGap
-            - MultiplayerRules.continuousCatchupTargetGap;
+            - MultiplayerRules.continuousCatchupStartGap;
           const gapShare = Math.min(
             1,
             Math.max(
               0,
-              (gapToAhead - MultiplayerRules.continuousCatchupTargetGap) / catchupRange,
+              (gapToAhead - MultiplayerRules.continuousCatchupStartGap) / catchupRange,
             ),
           );
-          const catchup = MultiplayerRules.continuousCatchupMin
-            + (MultiplayerRules.continuousCatchupMax - MultiplayerRules.continuousCatchupMin)
-              * gapShare;
+          const catchup = MultiplayerRules.continuousCatchupMax * gapShare;
           // Cap every follower against the leader rather than compounding
-          // +0.04x down a long train. A tail car closes after the car ahead
-          // joins the train, producing a stable accordion instead of runaway.
+          // +0.04x down a long train. Basing the assist on the follower's own
+          // pace means it recovers large deficits without being guaranteed to
+          // close every nearby gap.
           actual = Math.max(
             actual,
-            Math.min(aheadActual + catchup, leaderActual + MultiplayerRules.continuousCatchupMax),
+            Math.min(
+              naturalActual + catchup,
+              leaderActual + MultiplayerRules.continuousCatchupMax,
+            ),
           );
           if (workingPass) {
             if (canPassCruiser) actual += MultiplayerRules.continuousOvertakeBoost;

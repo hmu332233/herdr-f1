@@ -34,7 +34,7 @@ Vehicle pace is part of official scoring, not a display-only animation:
 - `WORKING` changes immediately to `1.0x` nominal pace.
 - Sustained working retains multiplayer's rolling 90-second uptime incentive and increases pace up to `1.02x`.
 - Per-lap random variation is reduced to `±0.5%`, so flavour does not obscure state and uptime.
-- Green-flag running gives every following car a gap-controlled catch-up correction from `+0.01x` to `+0.04x`, including a cruising car behind a working leader. The correction reaches its maximum half a lap behind and never compounds beyond `+0.04x` down a long train.
+- Green-flag running gives a car that is more than `0.1` laps behind the car ahead a soft recovery correction of up to `+0.04x`, including a cruising car behind a working leader. The correction is added to the follower's own natural pace, reaches its maximum half a lap behind, and never compounds beyond `+0.04x` down a long train. It does not guarantee that a slower car closes every gap, so nearby cars retain natural spacing instead of forming an evenly spaced train.
 - Catch-up stops at 80% of a vehicle-marker length, allowing at most 20% visual overlap. A car without passing permission matches the actual speed of the car ahead there, and the authoritative position step prevents the correction from creating an overtake. Cars that begin at the same coordinate first fan out to this spacing instead of preserving the overlap.
 - Only `WORKING` cars may overtake on track. Natural working pace may pass another car; within `0.08` laps of an `IDLE`, `DONE`, `CRUISING`, or offline car, working also receives a temporary `+0.04x` passing burst.
 - `BLOCKED` runs at `0x` and stops on the circuit.
@@ -48,7 +48,7 @@ Tyres are authoritative continuous-multiplayer state, not a local animation:
 
 - Every car starts a Grand Prix with `100%` tyre life.
 - Tyre life falls only during green-flag `WORKING` running. Cruising, offline, blocked, Safety Car, and pit time do not consume it.
-- Performance begins to fade below `50%`, reaching a maximum `-0.02x` correction at the mandatory-stop threshold of `20%`.
+- Performance begins to fade below `50%`, reaching a maximum `-0.01x` correction at the mandatory-stop threshold of `20%`. Even at maximum wear, a working car retains a small intrinsic pace advantage over a `0.98x` cruiser before pit-stop time is considered.
 - At `20%` the host automatically sends the car through `PIT IN`, `PITTING`, and `PIT OUT`. Official distance is frozen through the stop, so circulating cars may take the position.
 - Service takes four seconds between the pit-entry and pit-exit transitions, then restores tyre life to `100%`.
 - The public vehicle card and the viewer's MY TEAM timing row show tyre percentage and pit phase. Colour reinforces fresh, worn, and critical states but never replaces the numeric label.

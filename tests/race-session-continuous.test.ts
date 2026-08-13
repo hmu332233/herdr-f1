@@ -98,7 +98,7 @@ describe('continuous vehicle pace', () => {
     expect(finalGap).toBeLessThan(initialGap);
   });
 
-  it('lets a cruising follower close on a working leader but not pass it', () => {
+  it('does not force a nearby cruising follower onto a working leader', () => {
     const session = continuous(car('leader', 'working', counts(1, 0, 0, 0)));
     tickTo(session, 0, 9);
     session.applySnapshot(snap(team('alpha', 'alpha', [
@@ -110,15 +110,24 @@ describe('continuous vehicle pace', () => {
     const initialGap = entryById(initial, 'leader').officialDistance
       - entryById(initial, 'follower').officialDistance;
     expect(entryById(initial, 'follower').displaySpeed)
-      .toBeGreaterThan(entryById(initial, 'leader').displaySpeed);
+      .toBeLessThan(entryById(initial, 'leader').displaySpeed);
 
-    tickTo(session, 9, 300, 0.25);
+    tickTo(session, 9, 240, 0.25);
     const after = session.presentation();
     const finalGap = entryById(after, 'leader').officialDistance
       - entryById(after, 'follower').officialDistance;
-    expect(finalGap).toBeGreaterThanOrEqual(-1e-9);
-    expect(finalGap).toBeLessThan(initialGap);
-    expect(finalGap).toBeLessThanOrEqual(MultiplayerRules.continuousCatchupTargetGap + 1e-6);
+    expect(finalGap).toBeGreaterThan(initialGap);
+    expect(finalGap).toBeLessThan(MultiplayerRules.continuousCatchupFullGap);
+  });
+
+  it('keeps worn working pace above cruising pace before the mandatory stop', () => {
+    const session = continuous(car('worker', 'working', counts(1, 0, 0, 0)));
+    tickTo(session, 0, 337, 0.25);
+    const worker = entryById(session.presentation(), 'worker');
+    expect(worker.tireLife).toBeLessThan(30);
+    expect(worker.pitState).toBe('racing');
+    expect(worker.displaySpeed)
+      .toBeGreaterThan(RaceRules.baseSpeed * MultiplayerRules.cruisingFactor);
   });
 
   it('gives a working car a short boost to pass a nearby cruising car', () => {
@@ -201,7 +210,11 @@ describe('continuous vehicle pace', () => {
     tickTo(session, 0, MultiplayerRules.tireWorkingSecondsToPit, 0.25);
     expect(entryById(session.presentation(), 'leader').pitState).toBe('pitIn');
     tickTo(session, MultiplayerRules.tireWorkingSecondsToPit,
-      MultiplayerRules.tireWorkingSecondsToPit + 2, 0.25);
+      MultiplayerRules.tireWorkingSecondsToPit
+        + MultiplayerRules.pitEntrySeconds
+        + MultiplayerRules.pitServiceSeconds
+        + MultiplayerRules.pitExitSeconds,
+      0.25);
     const after = session.presentation();
     expect(entryById(after, 'follower').officialDistance)
       .toBeGreaterThan(entryById(after, 'leader').officialDistance);

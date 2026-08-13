@@ -71,12 +71,11 @@ export const MultiplayerRules = {
    *  small advantage rather than enough to split the field quickly. */
   cruisingFactor: 0.98,
   continuousWorkingBonusSpan: 0.02,
-  /** Green-flag rubber band. Every follower is eligible; the gap to the car
-   *  immediately ahead controls how much closing pace it receives. */
+  /** Green-flag recovery assist. Every follower is eligible, but the boost is
+   *  added to its own pace only after it falls outside the nearby racing pack.
+   *  It does not guarantee that a slower car closes on the car ahead. */
   continuousCatchupMax: 0.04,
-  /** A positive closing pace avoids an asymptotic gap that looks permanently
-   *  stuck just outside the target. The position cap still prevents a pass. */
-  continuousCatchupMin: 0.01,
+  continuousCatchupStartGap: 0.1,
   continuousCatchupFullGap: 0.5,
   /** Eight tenths of a car-marker length, allowing at most 20% visual overlap.
    *  The existing Safety Car gap is about 1.5 marker lengths, so
@@ -87,12 +86,13 @@ export const MultiplayerRules = {
   continuousOvertakeBoost: 0.04,
   continuousOvertakeRange: 0.08,
   /** Working consumes 80 points of tyre life over 20 nominal laps. Worn
-   *  tyres lose up to 0.02x before the mandatory stop at 20%. */
+   *  tyres lose up to 0.01x before the mandatory stop at 20%, preserving a
+   *  small intrinsic advantage over a 0.98x cruising car. */
   tireLifeFresh: 100,
   tireLifePitThreshold: 20,
   tireWearStartsAt: 50,
   tireWorkingSecondsToPit: 20 * RaceRules.baseLapDuration,
-  tirePenaltyMax: 0.02,
+  tirePenaltyMax: 0.01,
   pitEntrySeconds: 1.4,
   pitServiceSeconds: 4,
   pitExitSeconds: 1.4,
