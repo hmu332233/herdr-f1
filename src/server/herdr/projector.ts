@@ -1,9 +1,9 @@
 import type { AgentStatus } from '../../shared/presentation.js';
 import type { SourceAgent, SourceSnapshot, SourceTeam } from './types.js';
 
-// herdr 0.8.0 ships protocol 19; the snapshot fields the projector reads
+// herdr 0.8.2 ships protocol 20; the snapshot fields the projector reads
 // (workspaces/tabs/agents with object agent_session) are unchanged since 16.
-export const SUPPORTED_PROTOCOL = 19;
+export const SUPPORTED_PROTOCOL = 20;
 
 /** Any malformed, unsupported, or server-reported protocol problem. */
 export class HerdrProtocolFault extends Error {}
@@ -34,6 +34,7 @@ export function projectSnapshot(snapshot: unknown): SourceSnapshot {
     protocol?: unknown;
     workspaces?: unknown;
     tabs?: unknown;
+    panes?: unknown;
     agents?: unknown;
     focused_pane_id?: unknown;
   } | null;
@@ -52,6 +53,18 @@ export function projectSnapshot(snapshot: unknown): SourceSnapshot {
       `Herdr speaks protocol ${raw.protocol}, newer than the supported ${SUPPORTED_PROTOCOL}. ` +
       'Continuing anyway; update Herdr F1 if telemetry looks wrong.',
     );
+  }
+
+  // Subscription targets, kept apart from the raced set below: a pane whose
+  // agent is filtered out here still has to be watched, or nothing would
+  // report its return. Agent panes are unioned in because `panes` is optional
+  // on older protocols.
+  const paneIDs = new Set<string>();
+  for (const pane of (Array.isArray(raw.panes) ? raw.panes : []) as Array<{ pane_id?: unknown }>) {
+    if (typeof pane?.pane_id === 'string') paneIDs.add(pane.pane_id);
+  }
+  for (const agent of raw.agents as Array<{ pane_id?: unknown }>) {
+    if (typeof agent?.pane_id === 'string') paneIDs.add(agent.pane_id);
   }
 
   const tabs = new Map<string, { label?: string | null; title?: string | null; name?: string | null }>();
@@ -89,7 +102,7 @@ export function projectSnapshot(snapshot: unknown): SourceSnapshot {
     if (!agents || agents.length === 0) continue;
     teams.push({ id, label: workspace.label ?? id, agents });
   }
-  return { teams };
+  return { teams, paneIDs: [...paneIDs] };
 }
 
 function tabLabel(

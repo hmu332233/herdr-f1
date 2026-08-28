@@ -76,6 +76,24 @@ describe('projectSnapshot', () => {
     expect(snapshot.teams.find(team => team.id === 'ws-empty')).toBeUndefined();
   });
 
+  it('lists every reported pane as a subscription target, raced or not', () => {
+    const snapshot = projectSnapshot(rawSnapshot({
+      panes: [{ pane_id: 'p1' }, { pane_id: 'p-shell' }],
+    }));
+    // p4 holds the unknown-status agent the teams above drop, and p-shell holds
+    // no agent at all. Both still have to be watched: herdr reports a status
+    // change only to subscribers of that exact pane, so a pane left out here
+    // can never announce the agent that later appears on it.
+    expect(snapshot.paneIDs).toEqual(expect.arrayContaining(['p1', 'p4', 'p5', 'p-shell']));
+    expect(snapshot.teams.flatMap(team => team.agents.map(agent => agent.terminalID)))
+      .not.toContain('t4');
+  });
+
+  it('falls back to agent panes when the snapshot carries no pane list', () => {
+    const snapshot = projectSnapshot(rawSnapshot());
+    expect(snapshot.paneIDs).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
+  });
+
   it('warns once on the terminal and continues on newer protocols', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
