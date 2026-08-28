@@ -25,10 +25,12 @@ export const INVALIDATION_EVENTS: ReadonlySet<string> = new Set([
   'pane_agent_status_changed',
 ]);
 
-export function subscriptionRequest(id: string, agentPaneIDs: string[]): object {
+export function subscriptionRequest(id: string, statusPaneIDs: string[]): object {
   const subscriptions: Array<Record<string, string>> = BROADCAST_SUBSCRIPTIONS.map(type => ({ type }));
-  // Agent status is a per-pane subscription in the herdr protocol.
-  for (const paneID of agentPaneIDs) {
+  // Agent status is a per-pane subscription in the herdr protocol: there is no
+  // session-wide variant, so every pane that could ever hold a racing agent
+  // has to be named here, not just the ones racing right now.
+  for (const paneID of statusPaneIDs) {
     subscriptions.push({ type: 'pane.agent_status_changed', pane_id: paneID });
   }
   return { id, method: 'events.subscribe', params: { subscriptions } };
@@ -38,6 +40,11 @@ export interface HerdrClientOptions {
   socketPath?: string;
   initialReconnectDelayMs?: number;
   maximumReconnectDelayMs?: number;
+  /** Longest accepted gap between authoritative snapshots while subscribed.
+   *  Events remain the live path; this only bounds how long a dropped or
+   *  unmatched one can leave the race wrong, since nothing else re-reads
+   *  herdr. */
+  refreshFloorMs?: number;
 }
 
 /**
@@ -46,13 +53,15 @@ export interface HerdrClientOptions {
  * a short-lived connection. Event subscriptions live on one long-lived
  * connection that accepts a single events.subscribe at connect time; because
  * pane.agent_status_changed is per-pane, the client resubscribes with a fresh
- * connection whenever the set of agent panes changes. Every relevant event
- * triggers an authoritative snapshot refresh — there is no polling.
+ * connection whenever the set of panes changes. Every relevant event triggers
+ * an authoritative snapshot refresh, with a slow floor refresh underneath it
+ * so a single missed event cannot strand the race forever.
  */
 export function createHerdrClient(options: HerdrClientOptions = {}) {
   const socketPath = options.socketPath ?? defaultSocketPath;
   const initialReconnectDelayMs = options.initialReconnectDelayMs ?? 1000;
   const maximumReconnectDelayMs = options.maximumReconnectDelayMs ?? 30000;
+  const refreshFloorMs = options.refreshFloorMs ?? 60000;
   let requestSequence = 0;
   let started = false;
   let stopped = false;
@@ -123,18 +132,18 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
     let snapshot = await fetchSnapshot();
     onUpdate({ kind: 'snapshot', snapshot });
 
-    // Each pass subscribes with the current agent-pane set; a refresh that
-    // changes that set falls through to resubscribe.
+    // Each pass subscribes with the current pane set; a refresh that changes
+    // that set falls through to resubscribe.
     while (true) {
       if (stopped) return;
-      const agentPanes = new Set(allAgents(snapshot).map(agent => agent.paneID));
+      const statusPanes = paneSet(snapshot);
 
       const socket = await connectSocket(socketPath);
       eventSocket = socket;
       try {
         requestSequence += 1;
         const subscribeID = `subscribe-${requestSequence}`;
-        socket.write(JSON.stringify(subscriptionRequest(subscribeID, [...agentPanes].sort())) + '\n');
+        socket.write(JSON.stringify(subscriptionRequest(subscribeID, [...statusPanes].sort())) + '\n');
 
         const reader = createInterface({ input: socket, crlfDelay: Infinity })[Symbol.asyncIterator]();
         const first = await reader.next();
@@ -151,23 +160,43 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
         // gap between the bootstrap snapshot and the first event.
         snapshot = await fetchSnapshot();
         onUpdate({ kind: 'snapshot', snapshot });
-        if (!sameSet(paneSet(snapshot), agentPanes)) continue;
+        if (!sameSet(paneSet(snapshot), statusPanes)) continue;
 
         let resubscribe = false;
+        /** Held across iterations: a floor refresh can win the race below
+         *  while this is still outstanding, and the same promise must then be
+         *  awaited again rather than replaced — a second reader.next() would
+         *  drop the line the first one is waiting for. */
+        let pendingEvent: Promise<IteratorResult<string>> | null = null;
         while (!resubscribe) {
-          const next = await reader.next();
-          if (next.done) throw new Error('connection reset');
-          if (stopped) return;
-          const envelope = parseEnvelope(next.value);
-          if (typeof envelope.event !== 'string' || typeof envelope.data !== 'object' || envelope.data === null) {
-            throw new HerdrProtocolFault('Invalid Herdr response: event envelope is incomplete');
+          if (pendingEvent === null) {
+            pendingEvent = reader.next();
+            // Abandoning this promise on the way out of the loop must not
+            // surface as an unhandled rejection; the awaits below still see it.
+            pendingEvent.catch(() => {});
           }
-          if (!INVALIDATION_EVENTS.has(canonicalEventName(envelope.event))) continue;
+          const floor = floorRefresh(refreshFloorMs);
+          let next: IteratorResult<string> | typeof FLOOR;
+          try {
+            next = await Promise.race([pendingEvent, floor.reached]);
+          } finally {
+            floor.cancel();
+          }
+          if (stopped) return;
+          if (next !== FLOOR) {
+            pendingEvent = null;
+            if (next.done) throw new Error('connection reset');
+            const envelope = parseEnvelope(next.value);
+            if (typeof envelope.event !== 'string' || typeof envelope.data !== 'object' || envelope.data === null) {
+              throw new HerdrProtocolFault('Invalid Herdr response: event envelope is incomplete');
+            }
+            if (!INVALIDATION_EVENTS.has(canonicalEventName(envelope.event))) continue;
+          }
           // Refreshes run one at a time on this loop; events arriving
           // meanwhile stay buffered on the socket.
           snapshot = await fetchSnapshot();
           onUpdate({ kind: 'snapshot', snapshot });
-          resubscribe = !sameSet(paneSet(snapshot), agentPanes);
+          resubscribe = !sameSet(paneSet(snapshot), statusPanes);
         }
       } finally {
         if (eventSocket === socket) eventSocket = null;
@@ -244,8 +273,24 @@ function serverFault(error: unknown): HerdrProtocolFault {
   return new HerdrProtocolFault('Invalid Herdr response: invalid error response');
 }
 
+/** Panes to watch for status changes. Falls back to the racing agents' panes
+ *  when the source carries no pane list of its own. */
 function paneSet(snapshot: SourceSnapshot): Set<string> {
-  return new Set(allAgents(snapshot).map(agent => agent.paneID));
+  return new Set(snapshot.paneIDs ?? allAgents(snapshot).map(agent => agent.paneID));
+}
+
+/** Sentinel for "the floor refresh fired before any event arrived". */
+const FLOOR = Symbol('floor');
+
+/** A cancellable deadline. Unreferenced so a quiet subscription never keeps
+ *  the process alive on its own. */
+function floorRefresh(delayMs: number): { reached: Promise<typeof FLOOR>; cancel: () => void } {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const reached = new Promise<typeof FLOOR>(resolve => {
+    handle = setTimeout(() => resolve(FLOOR), delayMs);
+    handle.unref?.();
+  });
+  return { reached, cancel: () => clearTimeout(handle) };
 }
 
 function sameSet(a: Set<string>, b: Set<string>): boolean {

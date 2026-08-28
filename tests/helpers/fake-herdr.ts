@@ -60,6 +60,10 @@ export class FakeHerdr {
   private readonly server: net.Server;
   private readonly sockets = new Set<net.Socket>();
   private readonly eventSockets = new Set<net.Socket>();
+  /** Panes each event socket asked for status changes on. herdr only pushes
+   *  pane.agent_status_changed to subscribers of that exact pane, so emit()
+   *  honours it — a client watching the wrong panes must see nothing. */
+  private readonly statusPanes = new Map<net.Socket, Set<string>>();
 
   private constructor(readonly socketPath: string, snapshot: unknown) {
     this.snapshot = snapshot;
@@ -78,7 +82,13 @@ export class FakeHerdr {
 
   emit(event: string, data: object = {}): void {
     const line = JSON.stringify({ event, data }) + '\n';
-    for (const socket of this.eventSockets) socket.write(line);
+    const paneID = (data as { pane_id?: unknown }).pane_id;
+    const perPane =
+      event.replaceAll('.', '_') === 'pane_agent_status_changed' && typeof paneID === 'string';
+    for (const socket of this.eventSockets) {
+      if (perPane && !this.statusPanes.get(socket)?.has(paneID as string)) continue;
+      socket.write(line);
+    }
   }
 
   dropAllConnections(): void {
@@ -97,6 +107,7 @@ export class FakeHerdr {
     socket.on('close', () => {
       this.sockets.delete(socket);
       this.eventSockets.delete(socket);
+      this.statusPanes.delete(socket);
     });
     let buffer = '';
     let subscribed = false;
@@ -128,6 +139,11 @@ export class FakeHerdr {
             }
             subscribed = true;
             this.subscribeRequests.push(request);
+            this.statusPanes.set(socket, new Set(
+              (request.params?.subscriptions as Array<{ type?: string; pane_id?: string }> ?? [])
+                .filter(entry => entry?.type === 'pane.agent_status_changed' && typeof entry.pane_id === 'string')
+                .map(entry => entry.pane_id as string),
+            ));
             socket.write(
               (override ?? JSON.stringify({ id: request.id, result: { type: 'subscription_started' } })) + '\n',
             );
