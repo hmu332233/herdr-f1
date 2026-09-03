@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { parseArgs as parseNodeArgs } from 'node:util';
 import { ensureDaemon, runDaemon, statusDaemon, stopDaemon } from './daemon.js';
 import { FIXTURE_NAMES, type FixtureName } from './fixtures.js';
@@ -11,15 +12,15 @@ import { targetLabel, type InstanceTarget } from './target.js';
 import type { RaceMode } from '../shared/presentation.js';
 
 export type CliCommand =
-  | { kind: 'start'; target: InstanceTarget; port: number; open: boolean }
+  | { kind: 'start'; target: InstanceTarget; port: number; open: boolean; bindHost?: string }
   | { kind: 'stop'; target: InstanceTarget }
   | { kind: 'status'; target: InstanceTarget }
-  | { kind: 'daemon'; target: InstanceTarget; port: number }
+  | { kind: 'daemon'; target: InstanceTarget; port: number; bindHost?: string }
   | { kind: 'host'; port: number; circuit?: VenueID; raceMode: RaceMode }
   | { kind: 'join'; host: string; port: number; name: string; socketPath: string };
 
 const USAGE = `Usage:
-  herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
+  herdr-f1 [start] [--port <n>] [--bind <host>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
@@ -34,6 +35,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       strict: true,
       options: {
         port: { type: 'string' },
+        bind: { type: 'string' },
         open: { type: 'boolean' },
         socket: { type: 'string' },
         fixture: { type: 'string' },
@@ -55,6 +57,12 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     if ((!starts && values.port !== undefined) || (command !== 'start' && values.open)) throw new UsageError(USAGE);
     const port = Number(values.port ?? 4158);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError(USAGE);
+    // `host` picks its own wildcard bind, and the lifecycle commands only read
+    // the instance record, so --bind belongs to the local dashboard alone.
+    const binds = command === 'start' || command === '__daemon';
+    if (values.bind !== undefined && !binds) throw new UsageError(USAGE);
+    if (values.bind !== undefined && net.isIP(values.bind) === 0) throw new UsageError(USAGE);
+    const bindHost = values.bind;
     if (command === 'host') {
       if (values.fixture || values.socket) throw new UsageError(USAGE);
       if (values.circuit !== undefined && !isVenueID(values.circuit)) throw new UsageError(USAGE);
@@ -82,8 +90,11 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       ? { kind: 'fixture', name: values.fixture as FixtureName }
       : { kind: 'herdr', socketPath: values.socket ?? env.HERDR_SOCKET_PATH ?? defaultSocketPath };
     if (command === 'stop' || command === 'status') return { kind: command, target };
-    if (command === '__daemon') return { kind: 'daemon', target, port };
-    return { kind: 'start', target, port, open: values.open ?? false };
+    if (command === '__daemon') return bindHost === undefined
+      ? { kind: 'daemon', target, port }
+      : { kind: 'daemon', target, port, bindHost };
+    const start = { kind: 'start' as const, target, port, open: values.open ?? false };
+    return bindHost === undefined ? start : { ...start, bindHost };
   } catch (error) {
     if (error instanceof UsageError) throw error;
     throw new UsageError(USAGE);
@@ -113,7 +124,7 @@ export async function run(argv: string[]): Promise<void> {
     if (error instanceof UsageError) { console.error(error.message); process.exitCode = 2; return; }
     throw error;
   }
-  if (command.kind === 'daemon') { await runDaemon(command.target, command.port); return; }
+  if (command.kind === 'daemon') { await runDaemon(command.target, command.port, command.bindHost); return; }
   // Multiplayer commands run in the foreground (design decision 9): party
   // sessions are transient, so there is no daemon to manage.
   if (command.kind === 'host') { await runHost(command.port, command.circuit, command.raceMode); return; }
@@ -127,14 +138,23 @@ export async function run(argv: string[]): Promise<void> {
     const record = await statusDaemon(command.target);
     if (!record) { console.log(`Herdr F1 is stopped · ${targetLabel(command.target)}`); process.exitCode = 1; return; }
     console.log(`Herdr F1 is running · ${record.url}`);
+    printExtraURLs(record);
     console.log(`PID ${record.pid} · ${targetLabel(record.target)}`);
     console.log(`Log ${record.logPath}`);
     return;
   }
-  const result = await ensureDaemon({ target: command.target, port: command.port });
+  const result = await ensureDaemon({ target: command.target, port: command.port, bindHost: command.bindHost });
   console.log(`Herdr F1 · ${result.record.url}${result.reused ? ' · already running' : ''}`);
+  printExtraURLs(result.record);
   if (command.open) openBrowser(result.record.url);
   else console.log(`Open ${result.record.url} in your browser.`);
+}
+
+/** A wildcard bind answers on more than the loopback URL reported first, and
+ *  those are the addresses another device would use. */
+function printExtraURLs(record: { url: string; urls?: string[] }): void {
+  const extra = (record.urls ?? []).filter(url => url !== record.url);
+  for (const url of extra) console.log(`Also on ${url}`);
 }
 
 function openBrowser(url: string): void {

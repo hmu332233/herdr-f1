@@ -76,13 +76,27 @@ Run the dashboard directly without installing the Herdr plugin. Omit `--open` to
 print the local URL without opening a browser.
 
 ```sh
-npx herdr-f1 [start] [--port <port>] [--open] [--socket <path>]
+npx herdr-f1 [start] [--port <port>] [--bind <host>] [--open] [--socket <path>]
 npx herdr-f1 status [--socket <path>]
 npx herdr-f1 stop [--socket <path>]
 ```
 
 If installed globally, you can omit `npx`. The default port is `4158`; if it is
 already in use, Herdr F1 automatically finds the next available port.
+
+The dashboard binds `127.0.0.1` by default. `--bind` accepts any local address,
+so `--bind 0.0.0.0` exposes it to every interface — useful when the dashboard
+runs inside a VM or container and you reach it through a forwarded port. Only
+loopback is private: on any other address, anyone who can route to the machine
+can open the dashboard and focus your terminals.
+
+`start` and `status` print every address the dashboard answers on, so a
+wildcard bind lists the addresses another device would use:
+
+```
+Herdr F1 · http://127.0.0.1:4158
+Also on http://192.168.0.2:4158
+```
 
 ### Multiplayer race modes
 

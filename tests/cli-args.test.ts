@@ -16,8 +16,17 @@ describe('parseArgs', () => {
     expect(parseArgs(['status'], { HERDR_SOCKET_PATH: '/tmp/work.sock' })).toEqual({ kind: 'status', target: { kind: 'herdr', socketPath: '/tmp/work.sock' } });
     expect(parseArgs(['__daemon', '--socket', '/tmp/work.sock', '--port', '5001'], {})).toEqual({ kind: 'daemon', target: { kind: 'herdr', socketPath: '/tmp/work.sock' }, port: 5001 });
   });
+  it('parses --bind and forwards it to the daemon', () => {
+    expect(parseArgs(['start', '--bind', '0.0.0.0'], { HERDR_SOCKET_PATH: '/tmp/w.sock' }))
+      .toEqual({ kind: 'start', target: { kind: 'herdr', socketPath: '/tmp/w.sock' }, port: 4158, open: false, bindHost: '0.0.0.0' });
+    expect(parseArgs(['__daemon', '--socket', '/tmp/w.sock', '--bind', '::'], {}))
+      .toEqual({ kind: 'daemon', target: { kind: 'herdr', socketPath: '/tmp/w.sock' }, port: 4158, bindHost: '::' });
+    // Absent by default, so the loopback bind and its exact-origin policy stand.
+    expect(parseArgs(['start'], {})).not.toHaveProperty('bindHost');
+  });
+
   it('rejects incompatible targets, command flags, bad ports, and unknown input', () => {
-    for (const argv of [['start', '--socket', '/tmp/a', '--fixture', 'grid'], ['stop', '--port', '5000'], ['status', '--open'], ['start', '--no-open'], ['start', '--port', '0'], ['start', '--fixture', 'nope'], ['serve']]) {
+    for (const argv of [['start', '--socket', '/tmp/a', '--fixture', 'grid'], ['stop', '--port', '5000'], ['status', '--open'], ['start', '--no-open'], ['start', '--port', '0'], ['start', '--fixture', 'nope'], ['serve'], ['start', '--bind', 'everywhere'], ['stop', '--bind', '0.0.0.0'], ['host', '--bind', '0.0.0.0']]) {
       expect(() => parseArgs(argv, {})).toThrowError(/^Usage:/);
     }
   });
