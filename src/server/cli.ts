@@ -16,14 +16,14 @@ export type CliCommand =
   | { kind: 'stop'; target: InstanceTarget }
   | { kind: 'status'; target: InstanceTarget }
   | { kind: 'daemon'; target: InstanceTarget; port: number; bindHost?: string }
-  | { kind: 'host'; port: number; circuit?: VenueID; raceMode: RaceMode }
+  | { kind: 'host'; port: number; circuit?: VenueID; raceMode: RaceMode; bindHost?: string }
   | { kind: 'join'; host: string; port: number; name: string; socketPath: string };
 
 const USAGE = `Usage:
   herdr-f1 [start] [--port <n>] [--bind <host>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
+  herdr-f1 host [--port <n>] [--bind <host>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
   herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {}
 
@@ -57,10 +57,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
     if ((!starts && values.port !== undefined) || (command !== 'start' && values.open)) throw new UsageError(USAGE);
     const port = Number(values.port ?? 4158);
     if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new UsageError(USAGE);
-    // `host` picks its own wildcard bind, and the lifecycle commands only read
-    // the instance record, so --bind belongs to the local dashboard alone.
-    const binds = command === 'start' || command === '__daemon';
-    if (values.bind !== undefined && !binds) throw new UsageError(USAGE);
+    // The lifecycle commands only read the instance record, so --bind belongs
+    // to the commands that actually open a listening socket.
+    if (values.bind !== undefined && !starts) throw new UsageError(USAGE);
     if (values.bind !== undefined && net.isIP(values.bind) === 0) throw new UsageError(USAGE);
     const bindHost = values.bind;
     if (command === 'host') {
@@ -68,9 +67,10 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
       if (values.circuit !== undefined && !isVenueID(values.circuit)) throw new UsageError(USAGE);
       const raceMode = values['race-mode'] ?? 'classic';
       if (raceMode !== 'classic' && raceMode !== 'continuous') throw new UsageError(USAGE);
-      return values.circuit === undefined
+      const host: Extract<CliCommand, { kind: 'host' }> = values.circuit === undefined
         ? { kind: 'host', port, raceMode }
         : { kind: 'host', port, circuit: values.circuit, raceMode };
+      return bindHost === undefined ? host : { ...host, bindHost };
     }
     if (command === 'join') {
       if (positionals.length !== 2 || values.fixture) throw new UsageError(USAGE);
@@ -127,7 +127,7 @@ export async function run(argv: string[]): Promise<void> {
   if (command.kind === 'daemon') { await runDaemon(command.target, command.port, command.bindHost); return; }
   // Multiplayer commands run in the foreground (design decision 9): party
   // sessions are transient, so there is no daemon to manage.
-  if (command.kind === 'host') { await runHost(command.port, command.circuit, command.raceMode); return; }
+  if (command.kind === 'host') { await runHost(command.port, command.circuit, command.raceMode, command.bindHost); return; }
   if (command.kind === 'join') { await runJoin(command); return; }
   if (command.kind === 'stop') {
     const stopped = await stopDaemon(command.target);

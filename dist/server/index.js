@@ -7265,20 +7265,25 @@ function canBind(port, host) {
 
 const monotonicSeconds = () => performance.now() / 1000;
 const WILDCARD = new Set(['0.0.0.0', '::']);
-/** Every URL the dashboard actually answers on. A wildcard bind has no single
- *  address to report, so it is expanded to the interfaces it covers rather
- *  than printed as the loopback it merely includes. Loopback leads: it is the
- *  address that always works from this machine, and `--open` uses it. */
-function reachableURLs(bindHost, port) {
+/** Every URL a server on `bindHost` actually answers on. A wildcard bind has
+ *  no single address to report, so it is expanded to the interfaces it covers
+ *  rather than printed as the loopback it merely includes.
+ *
+ *  `loopback` says where that loopback URL belongs. The dashboard leads with
+ *  it — it is the address that always works from this machine, and `--open`
+ *  uses it. A multiplayer host puts it last, because the address its
+ *  participants need is a LAN one and that is what should catch the eye. */
+function reachableURLs(bindHost, port, loopback = 'first') {
     const withPort = (host) => `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
     if (!WILDCARD.has(bindHost))
         return [withPort(bindHost)];
     const family = bindHost === '0.0.0.0' ? 'IPv4' : 'IPv6';
-    const others = Object.values(external_node_os_default().networkInterfaces())
+    const others = new Set(Object.values(external_node_os_default().networkInterfaces())
         .flatMap(entries => entries ?? [])
         .filter(entry => entry.family === family && !entry.internal)
-        .map(entry => withPort(entry.address));
-    return [withPort(family === 'IPv4' ? '127.0.0.1' : '::1'), ...new Set(others)];
+        .map(entry => withPort(entry.address)));
+    const loopbackURL = withPort(family === 'IPv4' ? '127.0.0.1' : '::1');
+    return loopback === 'first' ? [loopbackURL, ...others] : [...others, loopbackURL];
 }
 /** The built web bundle, resolved relative to this module so it works both
  *  from source (src/web) and from the ncc bundle (dist/web). */
@@ -7899,7 +7904,6 @@ function createParticipantRegistry(raceMode = 'classic') {
 
 
 
-
 const host_monotonicSeconds = () => performance.now() / 1000;
 /**
  * The multiplayer aggregation server. Pure aggregator (design decision 10): it
@@ -8066,13 +8070,13 @@ function attachParticipant(socket, registry, publish, log) {
 }
 /** Foreground CLI runner (design decision 9): prints where to point browsers
  *  and join clients, then hosts until Ctrl+C. */
-async function runHost(port, circuit, raceMode = 'classic') {
+async function runHost(port, circuit, raceMode = 'classic', bindHost = '0.0.0.0') {
     const openingCircuit = circuit ?? (raceMode === 'continuous' ? randomVenue() : DEFAULT_VENUE_ID);
-    const host = await startHost({ port, circuit: openingCircuit, raceMode, log: line => console.log(line) });
+    const host = await startHost({ port, circuit: openingCircuit, raceMode, bindHost, log: line => console.log(line) });
     console.log(`Herdr F1 multiplayer host · ${raceMode} race · port ${host.port} · ` +
         `opening circuit ${openingCircuit} (${venueLaps(openingCircuit)} laps)`);
-    for (const address of viewerAddresses()) {
-        console.log(`  view    http://${address}:${host.port}`);
+    for (const url of reachableURLs(bindHost, host.port, 'last')) {
+        console.log(`  view    ${url}`);
     }
     console.log(`  join    herdr-f1 join <this-host>:${host.port} --name <your-name>`);
     console.log('No authentication — host on trusted networks (LAN/VPN) only. Ctrl+C to stop.');
@@ -8083,19 +8087,6 @@ async function runHost(port, circuit, raceMode = 'classic') {
     });
     console.log('Stopping host…');
     await host.close();
-}
-/** Non-internal IPv4 addresses, loopback last, so the printed URLs cover both
- *  the LAN and a browser on the host machine itself. */
-function viewerAddresses() {
-    const addresses = [];
-    for (const interfaces of Object.values(external_node_os_default().networkInterfaces())) {
-        for (const entry of interfaces ?? []) {
-            if (entry.family === 'IPv4' && !entry.internal)
-                addresses.push(entry.address);
-        }
-    }
-    addresses.push('127.0.0.1');
-    return addresses;
 }
 
 ;// CONCATENATED MODULE: ./src/server/multiplayer/join.ts
@@ -8306,7 +8297,7 @@ const USAGE = `Usage:
   herdr-f1 [start] [--port <n>] [--bind <host>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
+  herdr-f1 host [--port <n>] [--bind <host>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
   herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {
 }
@@ -8347,10 +8338,9 @@ function parseArgs(argv, env = process.env) {
         const port = Number(values.port ?? 4158);
         if (!Number.isInteger(port) || port <= 0 || port > 65535)
             throw new UsageError(USAGE);
-        // `host` picks its own wildcard bind, and the lifecycle commands only read
-        // the instance record, so --bind belongs to the local dashboard alone.
-        const binds = command === 'start' || command === '__daemon';
-        if (values.bind !== undefined && !binds)
+        // The lifecycle commands only read the instance record, so --bind belongs
+        // to the commands that actually open a listening socket.
+        if (values.bind !== undefined && !starts)
             throw new UsageError(USAGE);
         if (values.bind !== undefined && external_node_net_default().isIP(values.bind) === 0)
             throw new UsageError(USAGE);
@@ -8363,9 +8353,10 @@ function parseArgs(argv, env = process.env) {
             const raceMode = values['race-mode'] ?? 'classic';
             if (raceMode !== 'classic' && raceMode !== 'continuous')
                 throw new UsageError(USAGE);
-            return values.circuit === undefined
+            const host = values.circuit === undefined
                 ? { kind: 'host', port, raceMode }
                 : { kind: 'host', port, circuit: values.circuit, raceMode };
+            return bindHost === undefined ? host : { ...host, bindHost };
         }
         if (command === 'join') {
             if (positionals.length !== 2 || values.fixture)
@@ -8440,7 +8431,7 @@ async function run(argv) {
     // Multiplayer commands run in the foreground (design decision 9): party
     // sessions are transient, so there is no daemon to manage.
     if (command.kind === 'host') {
-        await runHost(command.port, command.circuit, command.raceMode);
+        await runHost(command.port, command.circuit, command.raceMode, command.bindHost);
         return;
     }
     if (command.kind === 'join') {

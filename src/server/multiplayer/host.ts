@@ -1,7 +1,6 @@
-import os from 'node:os';
 import type { WebSocket } from 'ws';
 import { createRaceBroadcaster } from '../broadcaster.js';
-import { webRootPath } from '../dashboard.js';
+import { reachableURLs, webRootPath } from '../dashboard.js';
 import { createRaceSession } from '../race-session.js';
 import { continuousMultiplayerPace, multiplayerPace } from '../rules.js';
 import { startServer } from '../server.js';
@@ -21,8 +20,8 @@ export interface HostOptions {
   /** Random source injection for deterministic tests. */
   random?: () => number;
   raceMode?: RaceMode;
-  /** Overridable so tests can host on loopback. Production hosts every
-   *  interface — that is the whole point of the mode. */
+  /** Defaults to every interface — that is the whole point of the mode.
+   *  `--bind` narrows it, and tests use it to host on loopback. */
   bindHost?: string;
   /** Participant comings and goings, for the host terminal. */
   log?: (line: string) => void;
@@ -226,15 +225,16 @@ export async function runHost(
   port: number,
   circuit?: VenueID,
   raceMode: RaceMode = 'classic',
+  bindHost: string = '0.0.0.0',
 ): Promise<void> {
   const openingCircuit = circuit ?? (raceMode === 'continuous' ? randomVenue() : DEFAULT_VENUE_ID);
-  const host = await startHost({ port, circuit: openingCircuit, raceMode, log: line => console.log(line) });
+  const host = await startHost({ port, circuit: openingCircuit, raceMode, bindHost, log: line => console.log(line) });
   console.log(
     `Herdr F1 multiplayer host · ${raceMode} race · port ${host.port} · ` +
     `opening circuit ${openingCircuit} (${venueLaps(openingCircuit)} laps)`,
   );
-  for (const address of viewerAddresses()) {
-    console.log(`  view    http://${address}:${host.port}`);
+  for (const url of reachableURLs(bindHost, host.port, 'last')) {
+    console.log(`  view    ${url}`);
   }
   console.log(`  join    herdr-f1 join <this-host>:${host.port} --name <your-name>`);
   console.log('No authentication — host on trusted networks (LAN/VPN) only. Ctrl+C to stop.');
@@ -246,17 +246,4 @@ export async function runHost(
   });
   console.log('Stopping host…');
   await host.close();
-}
-
-/** Non-internal IPv4 addresses, loopback last, so the printed URLs cover both
- *  the LAN and a browser on the host machine itself. */
-function viewerAddresses(): string[] {
-  const addresses: string[] = [];
-  for (const interfaces of Object.values(os.networkInterfaces())) {
-    for (const entry of interfaces ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal) addresses.push(entry.address);
-    }
-  }
-  addresses.push('127.0.0.1');
-  return addresses;
 }

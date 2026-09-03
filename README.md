@@ -108,10 +108,17 @@ working car may overtake on track. Working also consumes visible tyre life;
 worn cars make a mandatory stop that can change the order.
 
 ```sh
-npx herdr-f1 host --race-mode classic
+npx herdr-f1 host [--port <port>] [--bind <host>] --race-mode classic
 npx herdr-f1 host --race-mode continuous
 npx herdr-f1 join <host[:port]> --name <team-name>
 ```
+
+A host binds `0.0.0.0` by default — reaching other machines is the point of the
+mode — and prints every address a viewer or joining team can use, loopback
+last. `--bind` narrows that: a specific address keeps the party off the other
+interfaces, and `--bind 127.0.0.1` makes a host that only this machine can
+join, which is what you want when the browser reaches it through a forwarded
+port rather than over the network.
 
 The host owns race mode, venue rotation, scoring, and race control. Viewers can
 see those rules but cannot change them. Continuous mode rotates venues with a

@@ -12,19 +12,24 @@ const monotonicSeconds = (): number => performance.now() / 1000;
 
 const WILDCARD = new Set(['0.0.0.0', '::']);
 
-/** Every URL the dashboard actually answers on. A wildcard bind has no single
- *  address to report, so it is expanded to the interfaces it covers rather
- *  than printed as the loopback it merely includes. Loopback leads: it is the
- *  address that always works from this machine, and `--open` uses it. */
-export function reachableURLs(bindHost: string, port: number): string[] {
+/** Every URL a server on `bindHost` actually answers on. A wildcard bind has
+ *  no single address to report, so it is expanded to the interfaces it covers
+ *  rather than printed as the loopback it merely includes.
+ *
+ *  `loopback` says where that loopback URL belongs. The dashboard leads with
+ *  it — it is the address that always works from this machine, and `--open`
+ *  uses it. A multiplayer host puts it last, because the address its
+ *  participants need is a LAN one and that is what should catch the eye. */
+export function reachableURLs(bindHost: string, port: number, loopback: 'first' | 'last' = 'first'): string[] {
   const withPort = (host: string): string => `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
   if (!WILDCARD.has(bindHost)) return [withPort(bindHost)];
   const family = bindHost === '0.0.0.0' ? 'IPv4' : 'IPv6';
-  const others = Object.values(os.networkInterfaces())
+  const others = new Set(Object.values(os.networkInterfaces())
     .flatMap(entries => entries ?? [])
     .filter(entry => entry.family === family && !entry.internal)
-    .map(entry => withPort(entry.address));
-  return [withPort(family === 'IPv4' ? '127.0.0.1' : '::1'), ...new Set(others)];
+    .map(entry => withPort(entry.address)));
+  const loopbackURL = withPort(family === 'IPv4' ? '127.0.0.1' : '::1');
+  return loopback === 'first' ? [loopbackURL, ...others] : [...others, loopbackURL];
 }
 
 /** The built web bundle, resolved relative to this module so it works both

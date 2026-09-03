@@ -24,9 +24,15 @@ describe('parseArgs', () => {
     // Absent by default, so the loopback bind and its exact-origin policy stand.
     expect(parseArgs(['start'], {})).not.toHaveProperty('bindHost');
   });
+  it('parses --bind for a multiplayer host', () => {
+    expect(parseArgs(['host', '--bind', '127.0.0.1'], {}))
+      .toEqual({ kind: 'host', port: 4158, raceMode: 'classic', bindHost: '127.0.0.1' });
+    // Absent by default: a host without --bind still reaches every interface.
+    expect(parseArgs(['host'], {})).not.toHaveProperty('bindHost');
+  });
 
   it('rejects incompatible targets, command flags, bad ports, and unknown input', () => {
-    for (const argv of [['start', '--socket', '/tmp/a', '--fixture', 'grid'], ['stop', '--port', '5000'], ['status', '--open'], ['start', '--no-open'], ['start', '--port', '0'], ['start', '--fixture', 'nope'], ['serve'], ['start', '--bind', 'everywhere'], ['stop', '--bind', '0.0.0.0'], ['host', '--bind', '0.0.0.0']]) {
+    for (const argv of [['start', '--socket', '/tmp/a', '--fixture', 'grid'], ['stop', '--port', '5000'], ['status', '--open'], ['start', '--no-open'], ['start', '--port', '0'], ['start', '--fixture', 'nope'], ['serve'], ['start', '--bind', 'everywhere'], ['stop', '--bind', '0.0.0.0'], ['status', '--bind', '0.0.0.0'], ['host', '--bind', 'everywhere']]) {
       expect(() => parseArgs(argv, {})).toThrowError(/^Usage:/);
     }
   });
