@@ -85,22 +85,34 @@ circuitSelect.addEventListener('change', () => {
   if (sync) track.frame(performance.now());
 });
 
+/** Applies the lock, and only when it actually changes.
+ *
+ *  Gecko rolls up an open `<select>` dropdown when the element's attributes
+ *  mutate, and assigning an attribute the value it already holds still counts
+ *  as a mutation. Since the caller runs on every sync frame — four times a
+ *  second — an unguarded write dismisses the dropdown within 250ms of the
+ *  viewer opening it, so a circuit can never be picked in Firefox. */
+function lockPicker(locked: boolean): void {
+  if (circuitSelect.disabled === locked) return;
+  circuitSelect.disabled = locked;
+  if (locked) circuitSelect.title = 'Circuit is set by the multiplayer host';
+  else circuitSelect.removeAttribute('title');
+}
+
 /** Multiplayer: the host owns the venue, so every viewer follows the same
  *  circuit as it rotates between races and the selector is locked — viewers
  *  are anonymous and shared race state accepts no anonymous writes. Local mode
  *  syncs carry no circuitID and the selector stays a per-browser choice. */
 function followPinnedCircuit(circuitID: string | undefined): void {
   if (circuitID === undefined) {
-    circuitSelect.disabled = false;
-    circuitSelect.title = '';
+    lockPicker(false);
     return;
   }
   if (track.currentCircuitID() !== circuitID) {
     track.setCircuit(circuitID);
     circuitSelect.value = track.currentCircuitID();
   }
-  circuitSelect.disabled = true;
-  circuitSelect.title = 'Circuit is set by the multiplayer host';
+  lockPicker(true);
 }
 
 function frame(now: number): void {
