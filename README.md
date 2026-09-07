@@ -5,7 +5,7 @@
 [한국어](README.KR.md)
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+[![All Contributors](https://img.shields.io/badge/all_contributors-3-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 Herdr F1 visualizes the status of your running Herdr agents as an F1 race.
@@ -176,6 +176,7 @@ Thanks go to these wonderful people:
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/hmu332233"><img src="https://avatars.githubusercontent.com/hmu332233?v=4?s=100" width="100px;" alt="Minung Han"/><br /><sub><b>Minung Han</b></sub></a><br /><a href="https://github.com/hmu332233/herdr-f1/commits?author=hmu332233" title="Code">💻</a> <a href="https://github.com/hmu332233/herdr-f1/commits?author=hmu332233" title="Documentation">📖</a> <a href="#design-hmu332233" title="Design">🎨</a> <a href="https://github.com/hmu332233/herdr-f1/commits?author=hmu332233" title="Tests">⚠️</a> <a href="#maintenance-hmu332233" title="Maintenance">🚧</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/DevooKim"><img src="https://avatars.githubusercontent.com/DevooKim?v=4?s=100" width="100px;" alt="Kim HyunWoo"/><br /><sub><b>Kim HyunWoo</b></sub></a><br /><a href="https://github.com/hmu332233/herdr-f1/commits?author=DevooKim" title="Code">💻</a> <a href="https://github.com/hmu332233/herdr-f1/commits?author=DevooKim" title="Documentation">📖</a> <a href="https://github.com/hmu332233/herdr-f1/commits?author=DevooKim" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jonasws"><img src="https://avatars.githubusercontent.com/u/2318955?v=4?s=100" width="100px;" alt="Jonas Strømsodd"/><br /><sub><b>Jonas Strømsodd</b></sub></a><br /><a href="https://github.com/hmu332233/herdr-f1/issues?q=author%3Ajonasws" title="Bug reports">🐛</a> <a href="https://github.com/hmu332233/herdr-f1/commits?author=jonasws" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
