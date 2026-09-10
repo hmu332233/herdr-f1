@@ -27,6 +27,14 @@ describe('daemon registry', () => {
     setup(); writeInstanceRecord(record()); expect(readInstanceRecord(target)).toEqual(record());
     expect(fs.statSync(instancePaths(target).recordPath).mode & 0o777).toBe(0o600);
   });
+  it('round-trips the reachable URL list and rejects a malformed one', () => {
+    setup();
+    const wildcard = record({ url: 'http://127.0.0.1:4158', urls: ['http://127.0.0.1:4158', 'http://192.168.0.2:4158'] });
+    writeInstanceRecord(wildcard);
+    expect(readInstanceRecord(target)).toEqual(wildcard);
+    fs.writeFileSync(instancePaths(target).recordPath, JSON.stringify({ ...wildcard, urls: [4158] }));
+    expect(readInstanceRecord(target)).toBeNull();
+  });
   it('reuses a healthy daemon without spawning another process', async () => {
     setup(); writeInstanceRecord(record()); vi.spyOn(process, 'kill').mockReturnValue(true);
     inspectProcess.mockReturnValue({ status: 0, stdout: 'herdr-f1:test\n' });

@@ -5184,6 +5184,9 @@ __nccwpck_require__.d(__webpack_exports__, {
 
 ;// CONCATENATED MODULE: external "node:child_process"
 const external_node_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
+;// CONCATENATED MODULE: external "node:net"
+const external_node_net_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:net");
+var external_node_net_default = /*#__PURE__*/__nccwpck_require__.n(external_node_net_namespaceObject);
 ;// CONCATENATED MODULE: external "node:util"
 const external_node_util_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:util");
 ;// CONCATENATED MODULE: external "node:crypto"
@@ -5494,9 +5497,6 @@ function podium(session) {
     }
 }
 
-;// CONCATENATED MODULE: external "node:net"
-const external_node_net_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:net");
-var external_node_net_default = /*#__PURE__*/__nccwpck_require__.n(external_node_net_namespaceObject);
 ;// CONCATENATED MODULE: external "node:readline"
 const external_node_readline_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:readline");
 ;// CONCATENATED MODULE: external "node:timers/promises"
@@ -7262,7 +7262,29 @@ function canBind(port, host) {
 
 
 
+
 const monotonicSeconds = () => performance.now() / 1000;
+const WILDCARD = new Set(['0.0.0.0', '::']);
+/** Every URL a server on `bindHost` actually answers on. A wildcard bind has
+ *  no single address to report, so it is expanded to the interfaces it covers
+ *  rather than printed as the loopback it merely includes.
+ *
+ *  `loopback` says where that loopback URL belongs. The dashboard leads with
+ *  it — it is the address that always works from this machine, and `--open`
+ *  uses it. A multiplayer host puts it last, because the address its
+ *  participants need is a LAN one and that is what should catch the eye. */
+function reachableURLs(bindHost, port, loopback = 'first') {
+    const withPort = (host) => `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
+    if (!WILDCARD.has(bindHost))
+        return [withPort(bindHost)];
+    const family = bindHost === '0.0.0.0' ? 'IPv4' : 'IPv6';
+    const others = new Set(Object.values(external_node_os_default().networkInterfaces())
+        .flatMap(entries => entries ?? [])
+        .filter(entry => entry.family === family && !entry.internal)
+        .map(entry => withPort(entry.address)));
+    const loopbackURL = withPort(family === 'IPv4' ? '127.0.0.1' : '::1');
+    return loopback === 'first' ? [loopbackURL, ...others] : [...others, loopbackURL];
+}
 /** The built web bundle, resolved relative to this module so it works both
  *  from source (src/web) and from the ncc bundle (dist/web). */
 function webRootPath() {
@@ -7280,16 +7302,26 @@ async function startDashboard(options) {
         client.start(update => session.apply(update, monotonicSeconds()));
     }
     const webRoot = webRootPath();
+    const bindHost = options.bindHost ?? '127.0.0.1';
     const server = await startServer({
         port: options.port,
         webRoot,
         broadcaster,
+        bindHost,
+        // A non-loopback bind is reached under whatever address the browser used
+        // (a forwarded `localhost`, a LAN address), which the exact-origin policy
+        // would reject on the WebSocket upgrade. Same-origin either way.
+        viewerOrigin: bindHost === '127.0.0.1' ? 'loopback' : 'host',
         onFocus: terminalID => { client?.focus(terminalID).catch(() => { }); },
         onCircuit: totalLaps => { session.setTotalLaps(totalLaps, monotonicSeconds()); },
     });
     broadcaster.start();
+    const urls = reachableURLs(bindHost, server.port);
     return {
-        url: `http://127.0.0.1:${server.port}`,
+        url: urls[0],
+        /** Every URL the server answers on, `url` first. */
+        urls,
+        bindHost,
         port: server.port,
         close: async () => {
             broadcaster.stop();
@@ -7343,7 +7375,8 @@ function validRecord(value) {
     const record = value;
     return Number.isInteger(record.pid) && (record.pid ?? 0) > 0
         && typeof record.identity === 'string' && record.identity.length > 0
-        && typeof record.url === 'string' && record.url.startsWith('http://127.0.0.1:');
+        && typeof record.url === 'string' && record.url.startsWith('http://')
+        && (record.urls === undefined || (Array.isArray(record.urls) && record.urls.every(url => typeof url === 'string')));
 }
 function readInstanceRecord(target) {
     const { recordPath } = instancePaths(target);
@@ -7376,10 +7409,12 @@ function isProcessAlive(record) {
     const processInfo = (0,external_node_child_process_namespaceObject.spawnSync)('ps', ['-p', String(record.pid), '-o', 'command='], { encoding: 'utf8' });
     return processInfo.status === 0 && processInfo.stdout.trim() === `herdr-f1:${record.identity}`;
 }
-function spawnDaemon(target, port, logPath) {
+function spawnDaemon(target, port, bindHost, logPath) {
     const pluginRoot = external_node_path_default().resolve(external_node_path_default().dirname((0,external_node_url_namespaceObject.fileURLToPath)(import.meta.url)), '../..');
     const binPath = external_node_path_default().join(pluginRoot, 'bin', 'herdr-f1.js');
     const args = [binPath, '__daemon', '--port', String(port)];
+    if (bindHost !== undefined)
+        args.push('--bind', bindHost);
     if (target.kind === 'herdr')
         args.push('--socket', target.socketPath);
     else
@@ -7443,7 +7478,7 @@ async function ensureDaemon(request) {
         const again = liveRecord(request.target);
         if (again)
             return { record: again, reused: true };
-        spawnDaemon(request.target, request.port, instancePaths(request.target).logPath);
+        spawnDaemon(request.target, request.port, request.bindHost, instancePaths(request.target).logPath);
         while (Date.now() < deadline) {
             const ready = liveRecord(request.target);
             if (ready)
@@ -7470,18 +7505,20 @@ async function stopDaemon(target) {
     removeRecord(target);
     return true;
 }
-async function runDaemon(target, port) {
+async function runDaemon(target, port, bindHost) {
     const identity = (0,external_node_crypto_namespaceObject.randomBytes)(8).toString('hex');
     process.title = `herdr-f1:${identity}`;
     let resolveStop;
     const stopped = new Promise(resolve => { resolveStop = resolve; });
     const requestShutdown = () => resolveStop();
-    const dashboard = await startDashboard({ target, port });
+    const dashboard = await startDashboard({ target, port, bindHost });
     process.once('SIGINT', requestShutdown);
     process.once('SIGTERM', requestShutdown);
     try {
         const paths = instancePaths(target);
-        writeInstanceRecord({ pid: process.pid, identity, url: dashboard.url, target, logPath: paths.logPath });
+        writeInstanceRecord({
+            pid: process.pid, identity, url: dashboard.url, urls: dashboard.urls, target, logPath: paths.logPath,
+        });
         await stopped;
     }
     finally {
@@ -7867,7 +7904,6 @@ function createParticipantRegistry(raceMode = 'classic') {
 
 
 
-
 const host_monotonicSeconds = () => performance.now() / 1000;
 /**
  * The multiplayer aggregation server. Pure aggregator (design decision 10): it
@@ -8034,13 +8070,13 @@ function attachParticipant(socket, registry, publish, log) {
 }
 /** Foreground CLI runner (design decision 9): prints where to point browsers
  *  and join clients, then hosts until Ctrl+C. */
-async function runHost(port, circuit, raceMode = 'classic') {
+async function runHost(port, circuit, raceMode = 'classic', bindHost = '0.0.0.0') {
     const openingCircuit = circuit ?? (raceMode === 'continuous' ? randomVenue() : DEFAULT_VENUE_ID);
-    const host = await startHost({ port, circuit: openingCircuit, raceMode, log: line => console.log(line) });
+    const host = await startHost({ port, circuit: openingCircuit, raceMode, bindHost, log: line => console.log(line) });
     console.log(`Herdr F1 multiplayer host · ${raceMode} race · port ${host.port} · ` +
         `opening circuit ${openingCircuit} (${venueLaps(openingCircuit)} laps)`);
-    for (const address of viewerAddresses()) {
-        console.log(`  view    http://${address}:${host.port}`);
+    for (const url of reachableURLs(bindHost, host.port, 'last')) {
+        console.log(`  view    ${url}`);
     }
     console.log(`  join    herdr-f1 join <this-host>:${host.port} --name <your-name>`);
     console.log('No authentication — host on trusted networks (LAN/VPN) only. Ctrl+C to stop.');
@@ -8051,19 +8087,6 @@ async function runHost(port, circuit, raceMode = 'classic') {
     });
     console.log('Stopping host…');
     await host.close();
-}
-/** Non-internal IPv4 addresses, loopback last, so the printed URLs cover both
- *  the LAN and a browser on the host machine itself. */
-function viewerAddresses() {
-    const addresses = [];
-    for (const interfaces of Object.values(external_node_os_default().networkInterfaces())) {
-        for (const entry of interfaces ?? []) {
-            if (entry.family === 'IPv4' && !entry.internal)
-                addresses.push(entry.address);
-        }
-    }
-    addresses.push('127.0.0.1');
-    return addresses;
 }
 
 ;// CONCATENATED MODULE: ./src/server/multiplayer/join.ts
@@ -8269,11 +8292,12 @@ function bracketed(host) {
 
 
 
+
 const USAGE = `Usage:
-  herdr-f1 [start] [--port <n>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
+  herdr-f1 [start] [--port <n>] [--bind <host>] [--open] [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 stop [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
   herdr-f1 status [--fixture <${FIXTURE_NAMES.join('|')}>] [--socket <path>]
-  herdr-f1 host [--port <n>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
+  herdr-f1 host [--port <n>] [--bind <host>] [--circuit <${VENUE_IDS.join('|')}>] [--race-mode <classic|continuous>]
   herdr-f1 join <host[:port]> --name <name> [--socket <path>]`;
 class UsageError extends Error {
 }
@@ -8285,6 +8309,7 @@ function parseArgs(argv, env = process.env) {
             strict: true,
             options: {
                 port: { type: 'string' },
+                bind: { type: 'string' },
                 open: { type: 'boolean' },
                 socket: { type: 'string' },
                 fixture: { type: 'string' },
@@ -8313,6 +8338,13 @@ function parseArgs(argv, env = process.env) {
         const port = Number(values.port ?? 4158);
         if (!Number.isInteger(port) || port <= 0 || port > 65535)
             throw new UsageError(USAGE);
+        // The lifecycle commands only read the instance record, so --bind belongs
+        // to the commands that actually open a listening socket.
+        if (values.bind !== undefined && !starts)
+            throw new UsageError(USAGE);
+        if (values.bind !== undefined && external_node_net_default().isIP(values.bind) === 0)
+            throw new UsageError(USAGE);
+        const bindHost = values.bind;
         if (command === 'host') {
             if (values.fixture || values.socket)
                 throw new UsageError(USAGE);
@@ -8321,9 +8353,10 @@ function parseArgs(argv, env = process.env) {
             const raceMode = values['race-mode'] ?? 'classic';
             if (raceMode !== 'classic' && raceMode !== 'continuous')
                 throw new UsageError(USAGE);
-            return values.circuit === undefined
+            const host = values.circuit === undefined
                 ? { kind: 'host', port, raceMode }
                 : { kind: 'host', port, circuit: values.circuit, raceMode };
+            return bindHost === undefined ? host : { ...host, bindHost };
         }
         if (command === 'join') {
             if (positionals.length !== 2 || values.fixture)
@@ -8349,8 +8382,11 @@ function parseArgs(argv, env = process.env) {
         if (command === 'stop' || command === 'status')
             return { kind: command, target };
         if (command === '__daemon')
-            return { kind: 'daemon', target, port };
-        return { kind: 'start', target, port, open: values.open ?? false };
+            return bindHost === undefined
+                ? { kind: 'daemon', target, port }
+                : { kind: 'daemon', target, port, bindHost };
+        const start = { kind: 'start', target, port, open: values.open ?? false };
+        return bindHost === undefined ? start : { ...start, bindHost };
     }
     catch (error) {
         if (error instanceof UsageError)
@@ -8389,13 +8425,13 @@ async function run(argv) {
         throw error;
     }
     if (command.kind === 'daemon') {
-        await runDaemon(command.target, command.port);
+        await runDaemon(command.target, command.port, command.bindHost);
         return;
     }
     // Multiplayer commands run in the foreground (design decision 9): party
     // sessions are transient, so there is no daemon to manage.
     if (command.kind === 'host') {
-        await runHost(command.port, command.circuit, command.raceMode);
+        await runHost(command.port, command.circuit, command.raceMode, command.bindHost);
         return;
     }
     if (command.kind === 'join') {
@@ -8415,16 +8451,25 @@ async function run(argv) {
             return;
         }
         console.log(`Herdr F1 is running · ${record.url}`);
+        printExtraURLs(record);
         console.log(`PID ${record.pid} · ${targetLabel(record.target)}`);
         console.log(`Log ${record.logPath}`);
         return;
     }
-    const result = await ensureDaemon({ target: command.target, port: command.port });
+    const result = await ensureDaemon({ target: command.target, port: command.port, bindHost: command.bindHost });
     console.log(`Herdr F1 · ${result.record.url}${result.reused ? ' · already running' : ''}`);
+    printExtraURLs(result.record);
     if (command.open)
         openBrowser(result.record.url);
     else
         console.log(`Open ${result.record.url} in your browser.`);
+}
+/** A wildcard bind answers on more than the loopback URL reported first, and
+ *  those are the addresses another device would use. */
+function printExtraURLs(record) {
+    const extra = (record.urls ?? []).filter(url => url !== record.url);
+    for (const url of extra)
+        console.log(`Also on ${url}`);
 }
 function openBrowser(url) {
     const command = process.platform === 'darwin' ? 'open' : 'xdg-open';
