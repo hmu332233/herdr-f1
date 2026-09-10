@@ -165,6 +165,11 @@ async function listenOnFreePort(server: http.Server, preferred: number, bindHost
       await nextImmediate();
       continue;
     }
+    // Linux refuses overlapping binds itself: the listen() above already holds
+    // the port against the complement address, so the probe below would always
+    // see EADDRINUSE from our own socket and reject every port in the range.
+    // There, listen() succeeding is proof enough.
+    if (process.platform === 'linux') return port;
     // On macOS/BSD a wildcard bind and another process's specific bind coexist
     // on one port, in either order, so listen() succeeding does not prove the
     // port is ours alone — the more specific listener would take the loopback
