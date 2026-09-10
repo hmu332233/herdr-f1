@@ -5204,11 +5204,11 @@ const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(impor
  * Owns the server-side tick: advances the race session on a fixed cadence and
  * fans full sync messages out to connected browsers.
  */
-function createRaceBroadcaster(session, clock, tickMs = 250,
+function createRaceBroadcaster(session, clock, tickMs = 250, 
 /** Multiplayer only: the host-owned venue stamped on every sync so viewers
  *  render it and lock their selector. A getter lets the host rotate venues
  *  between Grands Prix. Local mode omits it. */
-circuitID,
+circuitID, 
 /** Called once after the session advances onto a new Grand Prix. Multiplayer
  *  uses this boundary to choose the next venue and update its race distance
  *  before the first sync for that Grand Prix is built. */
@@ -7224,6 +7224,12 @@ async function listenOnFreePort(server, preferred, bindHost) {
             await (0,promises_namespaceObject.setImmediate)();
             continue;
         }
+        // Linux refuses overlapping binds itself: the listen() above already holds
+        // the port against the complement address, so the probe below would always
+        // see EADDRINUSE from our own socket and reject every port in the range.
+        // There, listen() succeeding is proof enough.
+        if (process.platform === 'linux')
+            return port;
         // On macOS/BSD a wildcard bind and another process's specific bind coexist
         // on one port, in either order, so listen() succeeding does not prove the
         // port is ours alone — the more specific listener would take the loopback
