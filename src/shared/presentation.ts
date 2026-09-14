@@ -79,7 +79,7 @@ export type RaceOverlay =
   | { kind: 'suspended'; detail: string };
 
 export interface EntryPresentation {
-  /** Durable terminal ID: the car identity and the agent.focus target. */
+  /** Durable terminal ID: the car identity and the focus target. */
   id: string;
   carNumber: number;
   teamID: string;
@@ -134,7 +134,7 @@ export interface RadioMessage {
   /** Monotonic within a Grand Prix. The client's de-duplication key. */
   id: number;
   kind: RadioKind;
-  /** Durable terminal ID, so a radio line is an agent.focus target too. */
+  /** Durable terminal ID, so a radio line is a focus target too. */
   terminalID: string;
   carNumber: number;
   colorToken: TeamColorToken;

@@ -50,7 +50,7 @@ export interface HerdrClientOptions {
 
 /**
  * Event-driven herdr transport. herdr answers exactly one request per
- * connection and then closes it, so session.snapshot and agent.focus each use
+ * connection and then closes it, so session.snapshot and pane.focus each use
  * a short-lived connection. Event subscriptions live on one long-lived
  * connection that accepts a single events.subscribe at connect time; because
  * pane.agent_status_changed is per-pane, the client resubscribes with a fresh
@@ -92,13 +92,17 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
 
   async function focus(terminalID: string): Promise<void> {
     // Only focus terminals present in the latest authoritative snapshot.
-    const target = paneByTerminal.get(terminalID);
-    if (!target) return;
+    const paneID = paneByTerminal.get(terminalID);
+    if (!paneID) return;
     requestSequence += 1;
+    // pane.focus, not agent.focus: since herdr 0.9.0 (protocol 22) agent.focus
+    // updates focused_pane_id and the window title but leaves the attached
+    // client rendering whatever it was already showing, so a dashboard click
+    // looked like it did nothing. pane.focus moves the viewport.
     const envelope = await requestOnce({
       id: `focus-${requestSequence}`,
-      method: 'agent.focus',
-      params: { target },
+      method: 'pane.focus',
+      params: { pane_id: paneID },
     });
     if (envelope.error) throw serverFault(envelope.error);
   }

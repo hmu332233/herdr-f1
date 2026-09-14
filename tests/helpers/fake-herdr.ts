@@ -46,7 +46,7 @@ export async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Pro
 
 /**
  * Fake herdr with the measured transport semantics: session.snapshot and
- * agent.focus answer one line then close; events.subscribe holds the
+ * pane.focus answer one line then close; events.subscribe holds the
  * connection open, allows exactly one subscribe, and streams emitted events.
  */
 export class FakeHerdr {
@@ -128,9 +128,9 @@ export class FakeHerdr {
                 JSON.stringify({ id: request.id, result: { type: 'session_snapshot', snapshot: this.snapshot } })) + '\n',
             );
             break;
-          case 'agent.focus':
+          case 'pane.focus':
             this.focusRequests.push(request);
-            socket.end((override ?? JSON.stringify({ id: request.id, result: { type: 'agent_focused' } })) + '\n');
+            socket.end((override ?? JSON.stringify({ id: request.id, result: { type: 'pane_info' } })) + '\n');
             break;
           case 'events.subscribe':
             if (subscribed) {

@@ -154,7 +154,7 @@ describe('HerdrClient', () => {
     await waitUntil(() => c.updates.some(u => u.kind === 'connection' && u.state.kind === 'protocolError'));
   });
 
-  it('sends agent.focus targeting the terminal\'s current pane', async () => {
+  it('sends pane.focus targeting the terminal\'s current pane', async () => {
     fake = await FakeHerdr.start(rawSnapshot([rawAgent('t1', 'working')]));
     const c = collector();
     const herdrClient = makeClient(fake.socketPath);
@@ -162,10 +162,12 @@ describe('HerdrClient', () => {
     await waitUntil(() => kinds(c).includes('live'));
     await herdrClient.focus('t1');
     expect(fake.focusRequests).toHaveLength(1);
-    expect(fake.focusRequests[0].method).toBe('agent.focus');
-    // herdr focuses by pane; the client maps the durable terminal id (t1) to
-    // its current pane id (pane-t1) from the latest snapshot.
-    expect(fake.focusRequests[0].params).toEqual({ target: 'pane-t1' });
+    // agent.focus moves focused_pane_id without moving the client viewport on
+    // herdr 0.9.0; only pane.focus switches what the terminal renders.
+    expect(fake.focusRequests[0].method).toBe('pane.focus');
+    // The client maps the durable terminal id (t1) to its current pane id
+    // (pane-t1) from the latest snapshot.
+    expect(fake.focusRequests[0].params).toEqual({ pane_id: 'pane-t1' });
   });
 
   it('ignores focus requests for terminals outside the latest snapshot', async () => {
