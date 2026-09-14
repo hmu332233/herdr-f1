@@ -25,7 +25,7 @@ measure productivity or agent performance.
 Requirements:
 
 - macOS or Linux
-- A running [Herdr](https://github.com/ogulcancelik/herdr) 0.7.4 or later
+- A running [Herdr](https://github.com/ogulcancelik/herdr) 0.9.0 or later
 - Node.js 20 or later
 
 Choose either the Herdr plugin or the CLI.

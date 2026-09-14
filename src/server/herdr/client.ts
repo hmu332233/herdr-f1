@@ -10,7 +10,8 @@ export const defaultSocketPath = path.join(os.homedir(), '.config', 'herdr', 'he
 
 export const BROADCAST_SUBSCRIPTIONS: readonly string[] = [
   'workspace.created', 'workspace.updated', 'workspace.metadata_updated',
-  'workspace.renamed', 'workspace.moved', 'workspace.closed', 'workspace.focused',
+  'workspace.renamed', 'workspace.moved', 'workspace.reordered', 'workspace.closed',
+  'workspace.focused',
   'tab.created', 'tab.closed', 'tab.focused', 'tab.renamed', 'tab.moved',
   'pane.created', 'pane.closed', 'pane.focused', 'pane.moved', 'pane.exited',
   'pane.agent_detected',

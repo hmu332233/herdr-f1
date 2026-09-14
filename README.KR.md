@@ -22,7 +22,7 @@ Herdr F1은 Herdr에서 실행 중인 에이전트의 상태를 F1 레이스로 
 요구 사항:
 
 - macOS 또는 Linux
-- 실행 중인 [Herdr](https://github.com/ogulcancelik/herdr) 0.7.4 이상
+- 실행 중인 [Herdr](https://github.com/ogulcancelik/herdr) 0.9.0 이상
 - Node.js 20 이상
 
 Herdr 플러그인과 CLI 중 원하는 방식을 선택합니다.

@@ -40,6 +40,9 @@ describe('HerdrClient', () => {
     expect(subscriptions.some(s => s.type === 'pane.agent_status_changed' && s.pane_id === 'pane-t1')).toBe(true);
     expect(subscriptions.some(s => s.type === 'pane.updated')).toBe(false); // never subscribed
     expect(subscriptions.some(s => s.type === 'pane.agent_detected')).toBe(true);
+    // Workspace reordering carries no pane_id and changes the standings order;
+    // dropping it freezes the grid on a stale order instead of erroring.
+    expect(subscriptions.some(s => s.type === 'workspace.reordered')).toBe(true);
   });
 
   it('refreshes the snapshot on an invalidation event', async () => {

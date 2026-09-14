@@ -5502,9 +5502,9 @@ const external_node_readline_namespaceObject = __WEBPACK_EXTERNAL_createRequire(
 ;// CONCATENATED MODULE: external "node:timers/promises"
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:timers/promises");
 ;// CONCATENATED MODULE: ./src/server/herdr/projector.ts
-// herdr 0.8.2 ships protocol 20; the snapshot fields the projector reads
-// (workspaces/tabs/agents with object agent_session) are unchanged since 16.
-const SUPPORTED_PROTOCOL = 20;
+// herdr 0.9.0 ships protocol 22; the snapshot fields the projector reads
+// (workspaces/tabs/panes/agents with object agent_session) are unchanged since 16.
+const SUPPORTED_PROTOCOL = 22;
 /** Any malformed, unsupported, or server-reported protocol problem. */
 class HerdrProtocolFault extends Error {
 }
@@ -5633,7 +5633,8 @@ function allAgents(snapshot) {
 const defaultSocketPath = external_node_path_default().join(external_node_os_default().homedir(), '.config', 'herdr', 'herdr.sock');
 const BROADCAST_SUBSCRIPTIONS = [
     'workspace.created', 'workspace.updated', 'workspace.metadata_updated',
-    'workspace.renamed', 'workspace.moved', 'workspace.closed', 'workspace.focused',
+    'workspace.renamed', 'workspace.moved', 'workspace.reordered', 'workspace.closed',
+    'workspace.focused',
     'tab.created', 'tab.closed', 'tab.focused', 'tab.renamed', 'tab.moved',
     'pane.created', 'pane.closed', 'pane.focused', 'pane.moved', 'pane.exited',
     'pane.agent_detected',

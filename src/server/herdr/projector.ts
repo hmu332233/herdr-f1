@@ -1,9 +1,9 @@
 import type { AgentStatus } from '../../shared/presentation.js';
 import type { SourceAgent, SourceSnapshot, SourceTeam } from './types.js';
 
-// herdr 0.8.2 ships protocol 20; the snapshot fields the projector reads
-// (workspaces/tabs/agents with object agent_session) are unchanged since 16.
-export const SUPPORTED_PROTOCOL = 20;
+// herdr 0.9.0 ships protocol 22; the snapshot fields the projector reads
+// (workspaces/tabs/panes/agents with object agent_session) are unchanged since 16.
+export const SUPPORTED_PROTOCOL = 22;
 
 /** Any malformed, unsupported, or server-reported protocol problem. */
 export class HerdrProtocolFault extends Error {}
