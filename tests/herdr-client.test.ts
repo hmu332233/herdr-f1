@@ -19,8 +19,10 @@ afterEach(async () => {
   fake = null;
 });
 
-function makeClient(socketPath: string): HerdrClient {
-  client = createHerdrClient({ socketPath, initialReconnectDelayMs: 20, maximumReconnectDelayMs: 100 });
+function makeClient(socketPath: string, overrides: { refreshFloorMs?: number } = {}): HerdrClient {
+  client = createHerdrClient({
+    socketPath, initialReconnectDelayMs: 20, maximumReconnectDelayMs: 100, ...overrides,
+  });
   return client;
 }
 
@@ -38,6 +40,9 @@ describe('HerdrClient', () => {
     expect(subscriptions.some(s => s.type === 'pane.agent_status_changed' && s.pane_id === 'pane-t1')).toBe(true);
     expect(subscriptions.some(s => s.type === 'pane.updated')).toBe(false); // never subscribed
     expect(subscriptions.some(s => s.type === 'pane.agent_detected')).toBe(true);
+    // Workspace reordering carries no pane_id and changes the standings order;
+    // dropping it freezes the grid on a stale order instead of erroring.
+    expect(subscriptions.some(s => s.type === 'workspace.reordered')).toBe(true);
   });
 
   it('refreshes the snapshot on an invalidation event', async () => {
@@ -63,6 +68,52 @@ describe('HerdrClient', () => {
     await waitUntil(() => fake!.subscribeRequests.length >= 2);
     const latest = fake.subscribeRequests.at(-1)!.params.subscriptions as Array<{ type: string; pane_id?: string }>;
     expect(latest.some(s => s.type === 'pane.agent_status_changed' && s.pane_id === 'pane-t2')).toBe(true);
+  });
+
+  it('watches panes whose agent is not racing, so their return is noticed', async () => {
+    // pane-t4 holds an agent herdr cannot classify and pane-shell holds none.
+    // Neither races, and herdr has no session-wide status event, so leaving
+    // either out of the subscription would strand it permanently.
+    fake = await FakeHerdr.start(rawSnapshot(
+      [rawAgent('t1', 'working'), rawAgent('t4', 'unknown')],
+      { panes: [{ pane_id: 'pane-t1' }, { pane_id: 'pane-t4' }, { pane_id: 'pane-shell' }] },
+    ));
+    const c = collector();
+    makeClient(fake.socketPath).start(c.push);
+    await waitUntil(() => kinds(c).includes('live'));
+    const subscriptions = fake.subscribeRequests[0].params.subscriptions as Array<{ type: string; pane_id?: string }>;
+    const watched = subscriptions.filter(s => s.type === 'pane.agent_status_changed').map(s => s.pane_id);
+    expect(watched).toEqual(['pane-shell', 'pane-t1', 'pane-t4']);
+  });
+
+  it('refreshes when an unraced pane gains a racing agent', async () => {
+    fake = await FakeHerdr.start(rawSnapshot([rawAgent('t1', 'working'), rawAgent('t4', 'unknown')]));
+    const c = collector();
+    makeClient(fake.socketPath).start(c.push);
+    await waitUntil(() => fake!.snapshotRequests >= 2);
+    fake.snapshot = rawSnapshot([rawAgent('t1', 'working'), rawAgent('t4', 'working')]);
+    // The only event herdr sends for this transition. It reaches the client
+    // solely because pane-t4 is subscribed despite holding no racing agent.
+    fake.emit('pane.agent_status_changed', { pane_id: 'pane-t4', agent_status: 'working' });
+    await waitUntil(() => {
+      const last = c.updates.at(-1);
+      return last?.kind === 'snapshot'
+        && last.snapshot.teams[0]?.agents.some(agent => agent.terminalID === 't4');
+    });
+  });
+
+  it('refreshes on the floor interval when no event arrives at all', async () => {
+    fake = await FakeHerdr.start(rawSnapshot([rawAgent('t1', 'working')]));
+    const c = collector();
+    makeClient(fake.socketPath, { refreshFloorMs: 20 }).start(c.push);
+    await waitUntil(() => fake!.snapshotRequests >= 2);
+    // A change herdr never announces — a dropped or unsubscribed event looks
+    // exactly like this. Only the floor refresh can recover it.
+    fake.snapshot = rawSnapshot([rawAgent('t1', 'done')]);
+    await waitUntil(() => {
+      const last = c.updates.at(-1);
+      return last?.kind === 'snapshot' && last.snapshot.teams[0]?.agents[0]?.status === 'done';
+    });
   });
 
   it('reports offline after having been live, then reconnects', async () => {
@@ -103,7 +154,7 @@ describe('HerdrClient', () => {
     await waitUntil(() => c.updates.some(u => u.kind === 'connection' && u.state.kind === 'protocolError'));
   });
 
-  it('sends agent.focus targeting the terminal\'s current pane', async () => {
+  it('sends pane.focus targeting the terminal\'s current pane', async () => {
     fake = await FakeHerdr.start(rawSnapshot([rawAgent('t1', 'working')]));
     const c = collector();
     const herdrClient = makeClient(fake.socketPath);
@@ -111,10 +162,12 @@ describe('HerdrClient', () => {
     await waitUntil(() => kinds(c).includes('live'));
     await herdrClient.focus('t1');
     expect(fake.focusRequests).toHaveLength(1);
-    expect(fake.focusRequests[0].method).toBe('agent.focus');
-    // herdr focuses by pane; the client maps the durable terminal id (t1) to
-    // its current pane id (pane-t1) from the latest snapshot.
-    expect(fake.focusRequests[0].params).toEqual({ target: 'pane-t1' });
+    // agent.focus moves focused_pane_id without moving the client viewport on
+    // herdr 0.9.0; only pane.focus switches what the terminal renders.
+    expect(fake.focusRequests[0].method).toBe('pane.focus');
+    // The client maps the durable terminal id (t1) to its current pane id
+    // (pane-t1) from the latest snapshot.
+    expect(fake.focusRequests[0].params).toEqual({ pane_id: 'pane-t1' });
   });
 
   it('ignores focus requests for terminals outside the latest snapshot', async () => {

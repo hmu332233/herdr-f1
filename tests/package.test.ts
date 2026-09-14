@@ -86,7 +86,7 @@ describe('npm package', () => {
     const manifest = fs.readFileSync(new URL('herdr-plugin.toml', root), 'utf8');
     expect(manifest).toContain('id = "dev.minung.herdr-f1"');
     expect(manifest).toContain(`version = "${pkg.version}"`);
-    expect(manifest).toContain('min_herdr_version = "0.7.4"');
+    expect(manifest).toContain('min_herdr_version = "0.9.0"');
     expect(manifest).toContain('platforms = ["macos", "linux"]');
     expect(manifest).not.toContain('[[build]]');
     expect(manifest.match(/\[\[actions\]\]/g)).toHaveLength(2);
