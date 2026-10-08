@@ -31,9 +31,9 @@ describe('FakeHerdr', () => {
   it('records focus requests', async () => {
     const fake = await FakeHerdr.start(rawSnapshot([]));
     try {
-      await requestOnce(fake.socketPath, { id: 'f1', method: 'agent.focus', params: { target: 't1' } });
+      await requestOnce(fake.socketPath, { id: 'f1', method: 'pane.focus', params: { pane_id: 'pane-t1' } });
       expect(fake.focusRequests).toHaveLength(1);
-      expect(fake.focusRequests[0].params.target).toBe('t1');
+      expect(fake.focusRequests[0].params.pane_id).toBe('pane-t1');
     } finally {
       await fake.close();
     }

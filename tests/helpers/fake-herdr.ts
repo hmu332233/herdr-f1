@@ -46,7 +46,7 @@ export async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Pro
 
 /**
  * Fake herdr with the measured transport semantics: session.snapshot and
- * agent.focus answer one line then close; events.subscribe holds the
+ * pane.focus answer one line then close; events.subscribe holds the
  * connection open, allows exactly one subscribe, and streams emitted events.
  */
 export class FakeHerdr {
@@ -64,6 +64,7 @@ export class FakeHerdr {
    *  pane.agent_status_changed to subscribers of that exact pane, so emit()
    *  honours it — a client watching the wrong panes must see nothing. */
   private readonly statusPanes = new Map<net.Socket, Set<string>>();
+  private readonly subscribeIDs = new Map<net.Socket, string>();
 
   private constructor(readonly socketPath: string, snapshot: unknown) {
     this.snapshot = snapshot;
@@ -91,6 +92,17 @@ export class FakeHerdr {
     }
   }
 
+  /** herdr 0.9.2+ behaviour for a subscriber that fell behind its retained
+   *  history: an error carrying the subscribe request's id, then a close. */
+  loseEvents(): void {
+    for (const socket of this.eventSockets) {
+      socket.end(JSON.stringify({
+        id: this.subscribeIDs.get(socket),
+        error: { code: 'events_lost', message: 'event subscription fell behind retained history' },
+      }) + '\n');
+    }
+  }
+
   dropAllConnections(): void {
     for (const socket of this.sockets) socket.destroy();
   }
@@ -108,6 +120,7 @@ export class FakeHerdr {
       this.sockets.delete(socket);
       this.eventSockets.delete(socket);
       this.statusPanes.delete(socket);
+      this.subscribeIDs.delete(socket);
     });
     let buffer = '';
     let subscribed = false;
@@ -128,9 +141,9 @@ export class FakeHerdr {
                 JSON.stringify({ id: request.id, result: { type: 'session_snapshot', snapshot: this.snapshot } })) + '\n',
             );
             break;
-          case 'agent.focus':
+          case 'pane.focus':
             this.focusRequests.push(request);
-            socket.end((override ?? JSON.stringify({ id: request.id, result: { type: 'agent_focused' } })) + '\n');
+            socket.end((override ?? JSON.stringify({ id: request.id, result: { type: 'pane_info' } })) + '\n');
             break;
           case 'events.subscribe':
             if (subscribed) {
@@ -139,6 +152,7 @@ export class FakeHerdr {
             }
             subscribed = true;
             this.subscribeRequests.push(request);
+            this.subscribeIDs.set(socket, request.id);
             this.statusPanes.set(socket, new Set(
               (request.params?.subscriptions as Array<{ type?: string; pane_id?: string }> ?? [])
                 .filter(entry => entry?.type === 'pane.agent_status_changed' && typeof entry.pane_id === 'string')

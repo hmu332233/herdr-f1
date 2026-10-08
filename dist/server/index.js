@@ -5502,9 +5502,9 @@ const external_node_readline_namespaceObject = __WEBPACK_EXTERNAL_createRequire(
 ;// CONCATENATED MODULE: external "node:timers/promises"
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:timers/promises");
 ;// CONCATENATED MODULE: ./src/server/herdr/projector.ts
-// herdr 0.8.0 ships protocol 19; the snapshot fields the projector reads
-// (workspaces/tabs/agents with object agent_session) are unchanged since 16.
-const SUPPORTED_PROTOCOL = 19;
+// herdr 0.9.0–0.9.3 ship protocol 22; the snapshot fields the projector reads
+// (workspaces/tabs/panes/agents with object agent_session) are unchanged since 16.
+const SUPPORTED_PROTOCOL = 22;
 /** Any malformed, unsupported, or server-reported protocol problem. */
 class HerdrProtocolFault extends Error {
 }
@@ -5633,7 +5633,8 @@ function allAgents(snapshot) {
 const defaultSocketPath = external_node_path_default().join(external_node_os_default().homedir(), '.config', 'herdr', 'herdr.sock');
 const BROADCAST_SUBSCRIPTIONS = [
     'workspace.created', 'workspace.updated', 'workspace.metadata_updated',
-    'workspace.renamed', 'workspace.moved', 'workspace.closed', 'workspace.focused',
+    'workspace.renamed', 'workspace.moved', 'workspace.reordered', 'workspace.closed',
+    'workspace.focused',
     'tab.created', 'tab.closed', 'tab.focused', 'tab.renamed', 'tab.moved',
     'pane.created', 'pane.closed', 'pane.focused', 'pane.moved', 'pane.exited',
     'pane.agent_detected',
@@ -5658,11 +5659,12 @@ function subscriptionRequest(id, statusPaneIDs) {
 }
 /**
  * Event-driven herdr transport. herdr answers exactly one request per
- * connection and then closes it, so session.snapshot and agent.focus each use
+ * connection and then closes it, so session.snapshot and pane.focus each use
  * a short-lived connection. Event subscriptions live on one long-lived
  * connection that accepts a single events.subscribe at connect time; because
  * pane.agent_status_changed is per-pane, the client resubscribes with a fresh
- * connection whenever the set of panes changes. Every relevant event triggers
+ * connection whenever the set of panes changes, or when herdr drops the
+ * subscription with events_lost. Every relevant event triggers
  * an authoritative snapshot refresh, with a slow floor refresh underneath it
  * so a single missed event cannot strand the race forever.
  */
@@ -5698,14 +5700,18 @@ function createHerdrClient(options = {}) {
     }
     async function focus(terminalID) {
         // Only focus terminals present in the latest authoritative snapshot.
-        const target = paneByTerminal.get(terminalID);
-        if (!target)
+        const paneID = paneByTerminal.get(terminalID);
+        if (!paneID)
             return;
         requestSequence += 1;
+        // pane.focus, not agent.focus: since herdr 0.9.0 (protocol 22) agent.focus
+        // updates focused_pane_id and the window title but leaves the attached
+        // client rendering whatever it was already showing, so a dashboard click
+        // looked like it did nothing. pane.focus moves the viewport.
         const envelope = await requestOnce({
             id: `focus-${requestSequence}`,
-            method: 'agent.focus',
-            params: { target },
+            method: 'pane.focus',
+            params: { pane_id: paneID },
         });
         if (envelope.error)
             throw serverFault(envelope.error);
@@ -5761,6 +5767,8 @@ function createHerdrClient(options = {}) {
                 if (first.done)
                     throw new Error('connection reset');
                 const ack = parseEnvelope(first.value);
+                if (isEventsLost(ack))
+                    continue;
                 if (ack.error)
                     throw serverFault(ack.error);
                 if (ack.id !== subscribeID || ack.result?.type !== 'subscription_started') {
@@ -5802,6 +5810,12 @@ function createHerdrClient(options = {}) {
                         if (next.done)
                             throw new Error('connection reset');
                         const envelope = parseEnvelope(next.value);
+                        if (isEventsLost(envelope)) {
+                            resubscribe = true;
+                            continue;
+                        }
+                        if (envelope.error)
+                            throw serverFault(envelope.error);
                         if (typeof envelope.event !== 'string' || typeof envelope.data !== 'object' || envelope.data === null) {
                             throw new HerdrProtocolFault('Invalid Herdr response: event envelope is incomplete');
                         }
@@ -5882,6 +5896,13 @@ function serverFault(error) {
         return new HerdrProtocolFault(`Herdr error ${fault.code}: ${fault.message}`);
     }
     return new HerdrProtocolFault('Invalid Herdr response: invalid error response');
+}
+/** herdr 0.9.2+ closes a subscription that fell behind its retained event
+ *  history with this error, during setup or mid-stream. It is not a fault:
+ *  the documented recovery is a fresh subscription followed by a snapshot,
+ *  which is exactly what the next resubscribe pass does. */
+function isEventsLost(envelope) {
+    return envelope.error?.code === 'events_lost';
 }
 /** Panes to watch for status changes. Falls back to the racing agents' panes
  *  when the source carries no pane list of its own. */

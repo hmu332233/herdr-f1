@@ -10,7 +10,8 @@ export const defaultSocketPath = path.join(os.homedir(), '.config', 'herdr', 'he
 
 export const BROADCAST_SUBSCRIPTIONS: readonly string[] = [
   'workspace.created', 'workspace.updated', 'workspace.metadata_updated',
-  'workspace.renamed', 'workspace.moved', 'workspace.closed', 'workspace.focused',
+  'workspace.renamed', 'workspace.moved', 'workspace.reordered', 'workspace.closed',
+  'workspace.focused',
   'tab.created', 'tab.closed', 'tab.focused', 'tab.renamed', 'tab.moved',
   'pane.created', 'pane.closed', 'pane.focused', 'pane.moved', 'pane.exited',
   'pane.agent_detected',
@@ -49,11 +50,12 @@ export interface HerdrClientOptions {
 
 /**
  * Event-driven herdr transport. herdr answers exactly one request per
- * connection and then closes it, so session.snapshot and agent.focus each use
+ * connection and then closes it, so session.snapshot and pane.focus each use
  * a short-lived connection. Event subscriptions live on one long-lived
  * connection that accepts a single events.subscribe at connect time; because
  * pane.agent_status_changed is per-pane, the client resubscribes with a fresh
- * connection whenever the set of panes changes. Every relevant event triggers
+ * connection whenever the set of panes changes, or when herdr drops the
+ * subscription with events_lost. Every relevant event triggers
  * an authoritative snapshot refresh, with a slow floor refresh underneath it
  * so a single missed event cannot strand the race forever.
  */
@@ -91,13 +93,17 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
 
   async function focus(terminalID: string): Promise<void> {
     // Only focus terminals present in the latest authoritative snapshot.
-    const target = paneByTerminal.get(terminalID);
-    if (!target) return;
+    const paneID = paneByTerminal.get(terminalID);
+    if (!paneID) return;
     requestSequence += 1;
+    // pane.focus, not agent.focus: since herdr 0.9.0 (protocol 22) agent.focus
+    // updates focused_pane_id and the window title but leaves the attached
+    // client rendering whatever it was already showing, so a dashboard click
+    // looked like it did nothing. pane.focus moves the viewport.
     const envelope = await requestOnce({
       id: `focus-${requestSequence}`,
-      method: 'agent.focus',
-      params: { target },
+      method: 'pane.focus',
+      params: { pane_id: paneID },
     });
     if (envelope.error) throw serverFault(envelope.error);
   }
@@ -149,6 +155,7 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
         const first = await reader.next();
         if (first.done) throw new Error('connection reset');
         const ack = parseEnvelope(first.value);
+        if (isEventsLost(ack)) continue;
         if (ack.error) throw serverFault(ack.error);
         if (ack.id !== subscribeID || ack.result?.type !== 'subscription_started') {
           throw new HerdrProtocolFault('Unsupported Herdr response: events.subscribe was not acknowledged');
@@ -187,6 +194,11 @@ export function createHerdrClient(options: HerdrClientOptions = {}) {
             pendingEvent = null;
             if (next.done) throw new Error('connection reset');
             const envelope = parseEnvelope(next.value);
+            if (isEventsLost(envelope)) {
+              resubscribe = true;
+              continue;
+            }
+            if (envelope.error) throw serverFault(envelope.error);
             if (typeof envelope.event !== 'string' || typeof envelope.data !== 'object' || envelope.data === null) {
               throw new HerdrProtocolFault('Invalid Herdr response: event envelope is incomplete');
             }
@@ -271,6 +283,14 @@ function serverFault(error: unknown): HerdrProtocolFault {
     return new HerdrProtocolFault(`Herdr error ${fault.code}: ${fault.message}`);
   }
   return new HerdrProtocolFault('Invalid Herdr response: invalid error response');
+}
+
+/** herdr 0.9.2+ closes a subscription that fell behind its retained event
+ *  history with this error, during setup or mid-stream. It is not a fault:
+ *  the documented recovery is a fresh subscription followed by a snapshot,
+ *  which is exactly what the next resubscribe pass does. */
+function isEventsLost(envelope: Record<string, any>): boolean {
+  return envelope.error?.code === 'events_lost';
 }
 
 /** Panes to watch for status changes. Falls back to the racing agents' panes
