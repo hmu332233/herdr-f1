@@ -11,11 +11,14 @@ export interface InstanceRecord {
   pid: number;
   identity: string;
   url: string;
+  /** Every URL the dashboard answers on, `url` first. Absent on records
+   *  written by an older build, which only ever bound loopback. */
+  urls?: string[];
   target: InstanceTarget;
   logPath: string;
 }
 
-export interface StartRequest { target: InstanceTarget; port: number; }
+export interface StartRequest { target: InstanceTarget; port: number; bindHost?: string; }
 export interface StartResult { record: InstanceRecord; reused: boolean; }
 export interface InstancePaths { recordPath: string; lockPath: string; logPath: string; }
 
@@ -44,7 +47,8 @@ function validRecord(value: unknown): value is InstanceRecord {
   const record = value as Partial<InstanceRecord>;
   return Number.isInteger(record.pid) && (record.pid ?? 0) > 0
     && typeof record.identity === 'string' && record.identity.length > 0
-    && typeof record.url === 'string' && record.url.startsWith('http://127.0.0.1:');
+    && typeof record.url === 'string' && record.url.startsWith('http://')
+    && (record.urls === undefined || (Array.isArray(record.urls) && record.urls.every(url => typeof url === 'string')));
 }
 
 export function readInstanceRecord(target: InstanceTarget): InstanceRecord | null {
@@ -75,10 +79,11 @@ function isProcessAlive(record: InstanceRecord): boolean {
   return processInfo.status === 0 && processInfo.stdout.trim() === `herdr-f1:${record.identity}`;
 }
 
-function spawnDaemon(target: InstanceTarget, port: number, logPath: string): void {
+function spawnDaemon(target: InstanceTarget, port: number, bindHost: string | undefined, logPath: string): void {
   const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
   const binPath = path.join(pluginRoot, 'bin', 'herdr-f1.js');
   const args = [binPath, '__daemon', '--port', String(port)];
+  if (bindHost !== undefined) args.push('--bind', bindHost);
   if (target.kind === 'herdr') args.push('--socket', target.socketPath);
   else args.push('--fixture', target.name);
   ensurePrivateDirectory(path.dirname(logPath));
@@ -130,7 +135,7 @@ export async function ensureDaemon(request: StartRequest): Promise<StartResult> 
   try {
     const again = liveRecord(request.target);
     if (again) return { record: again, reused: true };
-    spawnDaemon(request.target, request.port, instancePaths(request.target).logPath);
+    spawnDaemon(request.target, request.port, request.bindHost, instancePaths(request.target).logPath);
     while (Date.now() < deadline) {
       const ready = liveRecord(request.target);
       if (ready) return { record: ready, reused: false };
@@ -154,18 +159,20 @@ export async function stopDaemon(target: InstanceTarget): Promise<boolean> {
   return true;
 }
 
-export async function runDaemon(target: InstanceTarget, port: number): Promise<void> {
+export async function runDaemon(target: InstanceTarget, port: number, bindHost?: string): Promise<void> {
   const identity = randomBytes(8).toString('hex');
   process.title = `herdr-f1:${identity}`;
   let resolveStop!: () => void;
   const stopped = new Promise<void>(resolve => { resolveStop = resolve; });
   const requestShutdown = () => resolveStop();
-  const dashboard = await startDashboard({ target, port });
+  const dashboard = await startDashboard({ target, port, bindHost });
   process.once('SIGINT', requestShutdown);
   process.once('SIGTERM', requestShutdown);
   try {
     const paths = instancePaths(target);
-    writeInstanceRecord({ pid: process.pid, identity, url: dashboard.url, target, logPath: paths.logPath });
+    writeInstanceRecord({
+      pid: process.pid, identity, url: dashboard.url, urls: dashboard.urls, target, logPath: paths.logPath,
+    });
     await stopped;
   } finally {
     process.removeListener('SIGINT', requestShutdown);
