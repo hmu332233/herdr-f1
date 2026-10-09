@@ -31,6 +31,13 @@ export interface SourceTeam {
  *  in authoritative workspace order. */
 export interface SourceSnapshot {
   teams: SourceTeam[];
+  /** Every pane herdr reported, whether or not it currently races. Per-pane
+   *  status subscriptions are built from this rather than from `teams`: an
+   *  agent whose status is not raceable is absent from `teams`, and herdr has
+   *  no session-wide status event, so subscribing only to racing panes would
+   *  leave nothing listening for the transition that brings one back.
+   *  Non-herdr sources (fixtures, multiplayer) have no panes and omit it. */
+  paneIDs?: string[];
 }
 
 export type HerdrUpdate =
